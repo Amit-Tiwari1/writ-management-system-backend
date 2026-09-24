@@ -1,0 +1,6 @@
+git init
+git add .
+git commit -m "feat: initialize enterprise legal writ backend engine with express and typescript"
+git branch -M main
+git remote add origin https://github.com/Amit-Tiwari1/writ-management-system-backend.git
+git push -u origin main
