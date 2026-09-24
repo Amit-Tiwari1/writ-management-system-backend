@@ -1,6 +1,45 @@
-git init
-git add .
-git commit -m "feat: initialize enterprise legal writ backend engine with express and typescript"
-git branch -M main
-git remote add origin https://github.com/Amit-Tiwari1/writ-management-system-backend.git
-git push -u origin main
+# Dependencies
+node_modules/
+package-lock.json.bak
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Production Build Output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment Variables & Secrets (CRITICAL)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor Directories
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs & Diagnostics
+logs/
+*.log
+npm-debug.log*
+
+# Temporary uploads / Local file cache (DMS storage / PDF scrapers)
+uploads/
+temp/
+downloads/
