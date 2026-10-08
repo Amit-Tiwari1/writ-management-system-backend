@@ -1,172 +1,334 @@
+// src/controllers/caseController.ts
 import { Request, Response } from "express";
-import { Case, Discovery } from "../models/Case";
+import { Case } from "../models/Case";
+import { Petitioner } from "../models/Petitioner";
+import { Discovery } from "../models/Discovery";
+import { CaseService } from "../services/caseService";
+import { MockJudicialService } from "../services/mockJudicialService";
+import { AuthRequest } from "../middlewares/authMiddleware";
+import { logAuditEvent } from "../utils/auditLogger";
 
-// 9. GET /api/v1/cases (Filter, Search & Paginate)
-export const getCases = async (req: Request, res: Response) => {
+
+export const getCasesRegister = async (req: Request, res: Response) => {
   try {
-    const { court, section, status, search, page = 1, limit = 20 } = req.query;
-    const filter: any = {};
+    const {
+      search,
+      court,
+      wing,
+      statusFilter,
+      page = 1,
+      limit = 10,
+    } = req.query;
 
-    if (court && court !== "ALL") filter.court = court;
-    if (section && section !== "ALL") filter.sectionWing = section;
-    if (status && status !== "ALL") filter.judicialStatus = status;
-
+    const query: any = {};
     if (search) {
-      filter.$or = [
-        { fileDocketNo: { $regex: search,$options: "i" } },
-        { cnrNumber: { $regex: search,$options: "i" } },
-        { leadPetitioner: { $regex: search,$options: "i" } },
-        { caseNumber: { $regex: search,$options: "i" } },
+      const searchRegex = new RegExp(search.toString().trim(), "i");
+      query.$or = [
+        { fileNo: searchRegex },
+        { noticeNumber: searchRegex },
+        { writNumber: searchRegex },
+        { cnrNumber: searchRegex },
+        { leadPetitioner: searchRegex },
+        { assignedOIC: searchRegex },
       ];
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
-    const [total, cases] = await Promise.all([
-      Case.countDocuments(filter),
-      Case.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(Number(limit)),
-    ]);
-
-    res.status(200).json({
-      success: true,
-      pagination: {
-        total,
-        page: Number(page),
-        pages: Math.ceil(total / Number(limit)),
-      },
-      data: cases,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 10. GET /api/v1/cases/:id (Full Dossier)
-export const getCaseById = async (req: Request, res: Response) => {
-  try {
-    const caseItem = await Case.findById(req.params.id);
-    if (!caseItem) return res.status(404).json({ success: false, message: "Case not found" });
-    res.status(200).json({ success: true, data: caseItem });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 11. PUT /api/v1/cases/:id (Update Case)
-export const updateCase = async (req: Request, res: Response) => {
-  try {
-    const updated = await Case.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ success: false, message: "Case not found" });
-    res.status(200).json({ success: true, message: "Case updated successfully", data: updated });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-};
-
-// 12. POST /api/v1/cases/:id/sync-ecourts
-export const syncCaseFromECourts = async (req: Request, res: Response) => {
-  try {
-    const caseItem = await Case.findById(req.params.id);
-    if (!caseItem) return res.status(404).json({ success: false, message: "Case not found" });
-
-    // Mock live NAPIX fetch response
-    caseItem.lastSyncedAt = new Date();
-    caseItem.syncStatus = "SUCCESS";
-    await caseItem.save();
-
-    res.status(200).json({
-      success: true,
-      message: `eCourts data synced for CNR ${caseItem.cnrNumber}`,
-      data: caseItem,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 13. GET /api/v1/cases/export/excel
-export const exportCasesExcel = async (req: Request, res: Response) => {
-  try {
-    const cases = await Case.find().select("fileDocketNo cnrNumber court caseType caseNumber leadPetitioner judicialStatus ndoh");
-    res.status(200).json({
-      success: true,
-      message: "Ready for download",
-      recordCount: cases.length,
-      data: cases,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 14. POST /api/v1/intake/verify-cnr
-export const verifyCNR = async (req: Request, res: Response) => {
-  try {
-    const { cnrNumber } = req.body;
-    if (!cnrNumber || cnrNumber.length < 16) {
-      return res.status(400).json({ success: false, message: "Valid 16-digit CNR is required" });
+    if (court && court !== "ALL" && court !== "All Courts") {
+      query.courtCode = court;
+    }
+    if (wing && wing !== "ALL" && wing !== "All Wings") {
+      query.sectionWing = wing;
+    }
+    if (statusFilter === "with_connected") {
+      query["connectedWrits.0"] = { $exists: true };
+    } else if (statusFilter === "advance_notice") {
+      query.identifierTier = 2;
+    } else if (statusFilter === "stay") {
+      query.hasActiveStay = true;
+    } else if (statusFilter === "contempt") {
+      query.isContemptNotice = true;
     }
 
-    // Mock High Court NAPIX Lookup Response
-    const isAllahabad = cnrNumber.toUpperCase().startsWith("UPHC01");
-    const simulatedData = {
-      cnrNumber: cnrNumber.toUpperCase(),
-      court: isAllahabad ? "High Court of Judicature at Allahabad" : "High Court Allahabad (Lucknow Bench)",
-      courtCode: isAllahabad ? "HC-ALD" : "HC-LKO",
-      caseType: "WRIT-A",
-      caseNumber: Math.floor(1000 + Math.random() * 9000).toString(),
-      caseYear: 2026,
-      leadPetitioner: "Subhash Chandra & Others",
-      respondentString: "State of U.P. thru Additional Chief Secretary (Home) & Chairman UPPRPB",
-      benchRoom: "Court No. 12",
-      coram: "Hon'ble Sitting Judge Division Bench",
-      filingDate: "14-Sep-2026",
-      status: "Listed for Admission",
-    };
+    const pageNum = parseInt(page.toString(), 10) || 1;
+    const limitNum = parseInt(limit.toString(), 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
+    const [cases, total] = await Promise.all([
+      Case.find(query).sort({ ndoh: 1, createdAt: -1 }).skip(skip).limit(limitNum).lean(),
+      Case.countDocuments(query),
+    ]);
 
-    res.status(200).json({ success: true, message: "CNR successfully verified via NAPIX", data: simulatedData });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    const [allCount, connectedCount, noticeCount, stayCount, contemptCount] = await Promise.all([
+      Case.countDocuments({}),
+      Case.countDocuments({ "connectedWrits.0": { $exists: true } }),
+      Case.countDocuments({ identifierTier: 2 }),
+      Case.countDocuments({ hasActiveStay: true }),
+      Case.countDocuments({ isContemptNotice: true }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: cases,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
+      pillsMetrics: {
+        all: allCount,
+        withConnected: connectedCount,
+        advanceNotice: noticeCount,
+        stayInForce: stayCount,
+        contemptAlerts: contemptCount,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 15. POST /api/v1/intake/register
-export const registerNewCase = async (req: Request, res: Response) => {
+export const getCaseById = async (req: Request, res: Response) => {
   try {
-    const count = await Case.countDocuments();
-    const docketNo = `PRPB-R/${count + 1001}/${new Date().getFullYear()}`;
+    const caseDoc = await Case.findById(req.params.id).lean();
+    if (!caseDoc) {
+      return res.status(404).json({ success: false, message: "Case not found." });
+    }
+    const petitioners = await Petitioner.find({ caseId: caseDoc._id }).lean();
+    return res.status(200).json({
+      success: true,
+      case: caseDoc,
+      petitioners,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      mode,
+      noticeNumber,
+      writNumber,
+      cnrNumber,
+      court,
+      courtCode,
+      caseType,
+      leadPetitioner,
+      respondentString,
+      assignedOIC,
+      assignedPairokar,
+      sectionWing,
+      category,
+      examCycle,
+      disputeSubject,
+      hasActiveStay,
+      isContemptNotice,
+      petitioners = [],
+    } = req.body;
+
+    const dupCheck = await CaseService.checkDuplicate({ noticeNumber, writNumber, cnrNumber });
+    if (dupCheck.exists) {
+      return res.status(409).json({
+        success: false,
+        message: "Duplicate litigation docket detected.",
+        matchedCase: dupCheck.matchedCase,
+      });
+    }
+
+    const fileNo = await CaseService.generateNextFileNo();
+    let tier: 1 | 2 | 3 | 4 = 1;
+    let syncStatus: any = "MANUAL_DOCKET";
+
+    if (mode === "CNR" && cnrNumber) {
+      tier = 4;
+      syncStatus = "SCHEDULED";
+    } else if (mode === "WRIT" && writNumber) {
+      tier = 3;
+    } else if (mode === "NOTICE" && noticeNumber) {
+      tier = 2;
+    }
 
     const newCase = await Case.create({
-      ...req.body,
-      fileDocketNo: docketNo,
+      fileNo,
+      noticeNumber: noticeNumber || "",
+      writNumber: writNumber || "",
+      cnrNumber: cnrNumber ? cnrNumber.toUpperCase() : "",
+      identifierTier: tier,
+      court: court || "High Court of Judicature at Allahabad",
+      courtCode: courtCode || "HC-ALD",
+      caseType: caseType || "WRIT-A",
+      leadPetitioner,
+      respondentString: respondentString || "State of U.P. & Chairman UPPRPB",
+      assignedOIC: assignedOIC || "Unassigned (OIC)",
+      assignedPairokar: assignedPairokar || "Unassigned (Pairokar)",
+      sectionWing: sectionWing || "Recruitment Wing",
+      category: category || "Constable Civil Police",
+      examCycle: examCycle || "2023-24",
+      disputeSubject: disputeSubject || "General Service Matter",
+      hasActiveStay: !!hasActiveStay,
+      isContemptNotice: !!isContemptNotice,
+      coPetitionersCount: petitioners.length,
+      syncStatus,
     });
 
-    res.status(201).json({
+    if (petitioners.length > 0) {
+      const petDocs = petitioners.map((p: any) => ({
+        caseId: newCase._id,
+        fileNo: newCase.fileNo,
+        rollNo: p.rollNo,
+        name: p.name,
+        fatherName: p.fatherName || "--",
+        role: p.role || "Co-Petitioner",
+        categoryClaimed: p.categoryClaimed || "General",
+        postClaimed: p.postClaimed || category,
+        district: p.district || "--",
+      }));
+      await Petitioner.insertMany(petDocs);
+    }
+
+    await logAuditEvent(
+      req,
+      "CASE_INTAKE_REGISTERED",
+      "CASE_HUB",
+      newCase._id.toString(),
+      { fileNo: newCase.fileNo, tier, leadPetitioner },
+      "INFO"
+    );
+
+    return res.status(201).json({
       success: true,
-      message: `Case registered with Docket ${docketNo}`,
-      data: newCase,
+      message: "Case docket successfully ingested.",
+      case: newCase,
     });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 16. GET /api/v1/intake/check-duplicate
-export const checkDuplicateCase = async (req: Request, res: Response) => {
+
+export const checkDuplicateDocket = async (req: Request, res: Response) => {
   try {
-    const { cnrNumber, caseNumber, caseYear, caseType } = req.query;
-    const existing = await Case.findOne({
-      $or: [
-        { cnrNumber: cnrNumber ? (cnrNumber as string).toUpperCase() : undefined },
-        { caseNumber, caseYear: Number(caseYear), caseType },
-      ].filter(Boolean),
+    const { fileNo, noticeNumber, writNumber, cnrNumber } = req.query;
+    const result = await CaseService.checkDuplicate({
+      fileNo: fileNo?.toString(),
+      noticeNumber: noticeNumber?.toString(),
+      writNumber: writNumber?.toString(),
+      cnrNumber: cnrNumber?.toString(),
     });
 
-    res.status(200).json({
+    return res.status(200).json({ success: true, ...result });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+export const triggerCaseSync = async (req: AuthRequest, res: Response) => {
+  try {
+    const caseId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updatedCase = await CaseService.syncCaseWithECourts(caseId);
+
+    await logAuditEvent(
+      req,
+      "CASE_ECOURTS_SYNCED",
+      "CASE_HUB",
+      updatedCase._id.toString(),
+      { fileNo: updatedCase.fileNo, ndoh: updatedCase.ndoh },
+      "INFO"
+    );
+
+    return res.status(200).json({
       success: true,
-      isDuplicate: !!existing,
-      existingDocketNo: existing ? existing.fileDocketNo : null,
+      message: "Synchronized with eCourts CIS Gateway successfully.",
+      case: updatedCase,
     });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+export const manageConnectedWrits = async (req: Request, res: Response) => {
+  try {
+    const { writNumber, cnrNumber, petitionerName } = req.body;
+    const caseDoc = await Case.findById(req.params.id);
+    if (!caseDoc) return res.status(404).json({ success: false, message: "Case not found." });
+
+    caseDoc.connectedWrits.push({
+      writNumber,
+      cnrNumber: cnrNumber || "",
+      petitionerName: petitionerName || "",
+      taggedDate: new Date(),
+    });
+
+    await caseDoc.save();
+    return res.status(200).json({
+      success: true,
+      message: "Connected writ tagged successfully.",
+      connectedWrits: caseDoc.connectedWrits,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+export const getCasePetitioners = async (req: Request, res: Response) => {
+  try {
+    const petitioners = await Petitioner.find({ caseId: req.params.caseId }).lean();
+    return res.status(200).json({ success: true, count: petitioners.length, petitioners });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+export const addCoPetitioner = async (req: Request, res: Response) => {
+  try {
+    const caseDoc = await Case.findById(req.params.caseId);
+    if (!caseDoc) return res.status(404).json({ success: false, message: "Case not found." });
+
+    const petitioner = await Petitioner.create({
+      ...req.body,
+      caseId: caseDoc._id,
+      fileNo: caseDoc.fileNo,
+    });
+
+    caseDoc.coPetitionersCount += 1;
+    await caseDoc.save();
+
+    return res.status(201).json({ success: true, petitioner });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+export const getUnclaimedDiscovery = async (req: Request, res: Response) => {
+  try {
+    let items: any[] = await Discovery.find({ status: "UNCLAIMED" }).lean();
+    if (items.length === 0) {
+      const feed = await MockJudicialService.getDailyCauseListFeed("Allahabad");
+      const inserted = await Discovery.insertMany(feed);
+      items = inserted.map((doc) => (doc.toObject ? doc.toObject() : doc));
+    }
+    return res.status(200).json({ success: true, count: items.length, items });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+export const mockVerifyCNR = async (req: Request, res: Response) => {
+  try {
+    const { cnrNumber } = req.body;
+    if (!cnrNumber) {
+      return res.status(400).json({ success: false, message: "16-digit CNR required." });
+    }
+    const details = await MockJudicialService.verifyCNR(cnrNumber);
+    return res.status(200).json({ success: true, details });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

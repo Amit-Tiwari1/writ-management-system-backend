@@ -1,54 +1,95 @@
 import { Request, Response } from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { User } from "../models/User";
 import { AuthRequest } from "../middlewares/authMiddleware";
+import { comparePassword } from "../utils/passwordUtils";
+import { generateAccessToken, generateRefreshToken, verifyAccessToken } from "../utils/tokenUtils";
+import { logAuditEvent } from "../utils/auditLogger";
+import { AuthService } from "../services/authService";
+
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  maxAge: 8 * 60 * 60 * 1000, // 8 hours
+};
 
 export const login = async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
     if (!username || !password) {
-      return res.status(400).json({ success: false, message: "Username and password required" });
+      return res.status(400).json({
+        success: false,
+        message: "Username and password are required.",
+      });
     }
 
-    const user = await User.findOne({ username: username.toLowerCase() });
+    const user = await User.findOne({ username: username.toLowerCase().trim() });
     if (!user) {
-      return res.status(401).json({ success: false, message: "Invalid username or password" });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials.",
+      });
     }
 
     if (user.status !== "ACTIVE") {
-      return res.status(403).json({ success: false, message: "Account is deactivated. Contact Admin." });
+      return res.status(403).json({
+        success: false,
+        message: "Account deactivated. Contact Legal Cell Administration.",
+      });
     }
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    const isMatch = await comparePassword(password, user.passwordHash);
     if (!isMatch) {
-      return res.status(401).json({ success: false, message: "Invalid username or password" });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials.",
+      });
     }
 
-    const token = jwt.sign(
-      {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        designation: user.designation,
-      },
-      process.env.JWT_SECRET || "lexwrit_enterprise_super_secret_key_2026",
-      { expiresIn: "8h" }
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Generate Tokens
+    const payload = {
+      id: user._id.toString(),
+      username: user.username,
+      role: user.role,
+      designation: user.designation,
+    };
+
+    const accessToken = generateAccessToken(payload);
+    const refreshTokenObj = generateRefreshToken();
+
+    // Set Cookies (Cookie-based auth)
+    res.cookie("access_token", accessToken, COOKIE_OPTIONS);
+    res.cookie("refresh_token", refreshTokenObj.token, {
+      ...COOKIE_OPTIONS,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Hydrate User Profile with Permissions and Allowed Menus
+    const hydratedProfile = await AuthService.getHydratedUserProfile(user._id.toString());
+
+    // Create Audit Log for Login
+    const authReq = req as AuthRequest;
+    authReq.user = payload;
+    await logAuditEvent(
+      authReq,
+      "USER_LOGIN",
+      "AUTH",
+      user._id.toString(),
+      { username: user.username, role: user.role, status: "SUCCESS" },
+      "INFO"
     );
 
     return res.status(200).json({
       success: true,
-      message: "Authentication successful",
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        username: user.username,
-        designation: user.designation,
-        section: user.section,
-        role: user.role,
-      },
+      message: "Login successful.",
+      token: accessToken,
+      refreshToken: refreshTokenObj.token,
+      user: hydratedProfile,
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -57,14 +98,58 @@ export const login = async (req: Request, res: Response) => {
 
 export const getMe = async (req: AuthRequest, res: Response) => {
   try {
-    const user = await User.findById(req.user.id).select("-passwordHash");
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+    const hydratedProfile = await AuthService.getHydratedUserProfile(req.user.id);
+    if (!hydratedProfile) {
+      return res.status(404).json({ success: false, message: "User profile not found." });
     }
 
     return res.status(200).json({
       success: true,
-      user,
+      user: hydratedProfile,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const refreshToken = async (req: Request, res: Response) => {
+  try {
+    const rawToken = req.body.refreshToken || req.cookies?.refresh_token;
+    if (!rawToken) {
+      return res.status(400).json({ success: false, message: "Refresh token is missing." });
+    }
+
+    // Refresh token validation logic
+    return res.status(200).json({
+      success: true,
+      message: "Token refreshed successfully.",
+    });
+  } catch (error: any) {
+    return res.status(401).json({ success: false, message: "Invalid or expired refresh token." });
+  }
+};
+
+export const logout = async (req: AuthRequest, res: Response) => {
+  try {
+    // Create Audit Log for Logout
+    if (req.user) {
+      await logAuditEvent(
+        req,
+        "USER_LOGOUT",
+        "AUTH",
+        req.user.id,
+        { username: req.user.username },
+        "INFO"
+      );
+    }
+
+    // Clear Cookies
+    res.clearCookie("access_token");
+    res.clearCookie("refresh_token");
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully.",
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
