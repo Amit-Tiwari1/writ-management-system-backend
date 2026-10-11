@@ -10,6 +10,7 @@ import {
   addCoPetitioner,
   getUnclaimedDiscovery,
   mockVerifyCNR,
+  linkDiscoveredWritToNotice,
 } from "../controllers/caseController";
 import { authenticateToken } from "../middlewares/authMiddleware";
 
@@ -25,7 +26,7 @@ router.get("/intake/check-duplicate", checkDuplicateDocket);
 router.post("/intake/register", registerCaseIntake);
 router.get("/cases/:caseId/petitioners", getCasePetitioners);
 router.post("/cases/:caseId/petitioners", addCoPetitioner);
-
 router.get("/discovery/unclaimed", getUnclaimedDiscovery);
+router.post("/discovery/link-notice", linkDiscoveredWritToNotice);
 
 export default router;

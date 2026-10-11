@@ -1,41 +1,40 @@
 import crypto from "crypto";
-import { AuditLog } from "../models/AdminSecurity";
-import { AuthRequest } from "../middlewares/authMiddleware";
+import { Request } from "express";
+import { AuditLog, AuditActionType } from "../models/AuditLog";
 
 export const logAuditEvent = async (
-  req: AuthRequest,
-  action: string,
-  module: string,
-  targetId: string,
-  mutationPayload: any,
+  req: Request,
+  actionType: AuditActionType,
+  targetDossier: string,
+  mutationSummary: string,
+  payloadSnapshot: any = {},
   severity: "INFO" | "WARNING" | "CRITICAL" = "INFO"
 ) => {
   try {
-    const authHeader = req.headers["authorization"] || "";
-    const jwtTokenHash = crypto.createHash("sha256").update(authHeader).digest("hex").slice(0, 16);
-    const ipAddress = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
-    const userAgent = req.headers["user-agent"] || "System Internal Client";
-    const timestamp = new Date();
+    const user = (req as any).user;
+    const ip = req.ip || req.headers["x-forwarded-for"] || "127.0.0.1";
+    const logId = `LOG-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const rawIntegrityData = `${req.user?.id}_${action}_${module}_${targetId}_${timestamp.toISOString()}`;
-    const integrityHash = crypto.createHash("sha256").update(rawIntegrityData).digest("hex");
+    const lastLog = await AuditLog.findOne().sort({ createdAt: -1 }).select("sha256ChainHash").lean();
+    const prevHash = lastLog?.sha256ChainHash || "GENESIS_BLOCK_000000";
+
+    const chainPayload = `${logId}_${actionType}_${targetDossier}_${prevHash}_${Date.now()}`;
+    const sha256ChainHash = crypto.createHash("sha256").update(chainPayload).digest("hex");
 
     await AuditLog.create({
-      timestamp,
-      actorId: req.user?.id,
-      actorName: req.user?.name || req.user?.username || "Authorized Staff",
-      actorRole: req.user?.role || "Staff Officer",
-      action,
-      module,
-      targetId,
+      logId,
+      userId: user?.id,
+      userName: user?.name || user?.username || "System Daemon",
+      userDesignation: user?.designation || user?.role || "System Process",
+      sourceIp: String(ip).replace("::ffff:", ""),
+      actionType,
+      targetDossier,
+      mutationSummary,
       severity,
-      ipAddress,
-      userAgent,
-      jwtTokenHash,
-      mutationPayload,
-      integrityHash,
+      payloadSnapshot,
+      sha256ChainHash,
     });
-  } catch (err) {
-    console.error("Failed to persist audit log:", err);
+  } catch (err: any) {
+    console.error("[AuditLog Error]:", err.message);
   }
 };

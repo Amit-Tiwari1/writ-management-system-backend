@@ -1,25 +1,24 @@
 import { Router } from "express";
 import { authenticateToken } from "../middlewares/authMiddleware";
 import {
-  getDashboardKPIs,
-  getMatrixSummary,
-  getNDOHCalendar,
-  getUrgentAlerts,
+  getDashboardKpis,
+  getWritClassificationMatrix,
+  getCourtForumDistribution,
+  getOicPendingWorkload,
+  getHearingCalendarHeatmap,
 } from "../controllers/dashboardController";
 
 const router = Router();
 router.use(authenticateToken);
 
-// 5. KPIs summary
-router.get("/dashboard/kpis", getDashboardKPIs);
+router.get("/dashboard/kpis", getDashboardKpis);
 
-// 6. Section vs Court matrix
-router.get("/dashboard/matrix-summary", getMatrixSummary);
+router.get("/dashboard/matrix", getWritClassificationMatrix);
 
-// 7. 7-15 Days NDOH schedule
-router.get("/dashboard/ndoh-calendar", getNDOHCalendar);
+router.get("/dashboard/court-distribution", getCourtForumDistribution);
 
-// 8. Real-time red alerts
-router.get("/dashboard/urgent-alerts", getUrgentAlerts);
+router.get("/dashboard/oic-workload", getOicPendingWorkload);
+
+router.get("/dashboard/calendar-heatmap", getHearingCalendarHeatmap);
 
 export default router;

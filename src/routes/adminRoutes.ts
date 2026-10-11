@@ -1,47 +1,41 @@
-// import { Router } from "express";
-// import { authenticateToken } from "../middlewares/authMiddleware";
-// import {
-//   getAdminUsers,
-//   createAdminUser,
-//   updateAdminUser,
-//   toggleUserStatus,
-//   getRoles,
-//   createRole,
-//   getRolePermissions,
-//   updateRolePermissions,
-//   getAuditLogs,
-//   getAuditLogForensics,
-//   exportSignedAuditLedger,
-//   getSyncTelemetry,
-//   triggerBroadcastSync,
-//   pingCourtEndpoint,
-//   rotateNapixToken,
-// } from "../controllers/adminController";
+import { Router } from "express";
+import { authenticateToken } from "../middlewares/authMiddleware";
+import {
+  getUserFormDropdowns,
+  getUsersList,
+  createStaffUser,
+  updateStaffUser,
+  getRolesWithMetrics,
+  createRoleWithPermissions,
+  getRolePermissionsMatrix,
+  updateRolePermissionMatrix,
+  getAuditLogs,
+  getECourtsSyncHealth,
+  triggerFullSync,
+} from "../controllers/adminController"; // 👈 Yahan adminController kar dijiye
 
-// const router = Router();
-// router.use(authenticateToken);
+const router = Router();
+router.use(authenticateToken);
 
-// // 7.1 Officers Directory
-// router.get("/admin/users", getAdminUsers);
-// router.post("/admin/users", createAdminUser);
-// router.put("/admin/users/:id", updateAdminUser);
-// router.patch("/admin/users/:id/toggle-status", toggleUserStatus);
+// Form Dropdowns (Ranks, Designations, Departments, Roles)
+router.get("/admin/users/form-dropdowns", getUserFormDropdowns);
 
-// // 7.2 Dynamic RBAC Matrix
-// router.get("/admin/roles", getRoles);
-// router.post("/admin/roles", createRole);
-// router.get("/admin/roles/:roleId/permissions", getRolePermissions);
-// router.put("/admin/roles/:roleId/permissions", updateRolePermissions);
+// 7.1 Officers & Users
+router.get("/admin/users", getUsersList);
+router.post("/admin/users", createStaffUser);
+router.put("/admin/users/:id", updateStaffUser);
 
-// // 7.3 Security Audit Trail & Forensics
-// router.get("/admin/audit-logs", getAuditLogs);
-// router.get("/admin/audit-logs/:logId/forensics", getAuditLogForensics);
-// router.get("/admin/audit-logs/export-signed", exportSignedAuditLedger);
+// 7.2 RBAC Roles & Permissions Matrix
+router.get("/admin/roles", getRolesWithMetrics);
+router.post("/admin/roles", createRoleWithPermissions);
+router.get("/admin/roles/:roleId/permissions", getRolePermissionsMatrix);
+router.put("/admin/roles/:roleId/permissions", updateRolePermissionMatrix);
 
-// // 7.4 eCourts Sync Diagnostics
-// router.get("/admin/sync-health/telemetry", getSyncTelemetry);
-// router.post("/admin/sync-health/trigger-sync", triggerBroadcastSync);
-// router.post("/admin/sync-health/ping/:benchId", pingCourtEndpoint);
-// router.post("/admin/sync-health/refresh-token", rotateNapixToken);
+// 7.3 Audit Trail
+router.get("/admin/audit-logs", getAuditLogs);
 
-// export default router;
+// 7.4 eCourts Sync Diagnostics
+router.get("/admin/sync-health", getECourtsSyncHealth);
+router.post("/admin/sync-health/trigger", triggerFullSync);
+
+export default router;

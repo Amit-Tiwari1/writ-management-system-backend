@@ -1,13 +1,12 @@
-// src/controllers/caseController.ts
 import { Request, Response } from "express";
 import { Case } from "../models/Case";
 import { Petitioner } from "../models/Petitioner";
 import { Discovery } from "../models/Discovery";
+import { Court, CaseType, CaseCategory, CaseSubCategory, CaseSubject } from "../models/Masters";
 import { CaseService } from "../services/caseService";
 import { MockJudicialService } from "../services/mockJudicialService";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import { logAuditEvent } from "../utils/auditLogger";
-
 
 export const getCasesRegister = async (req: Request, res: Response) => {
   try {
@@ -22,7 +21,7 @@ export const getCasesRegister = async (req: Request, res: Response) => {
 
     const query: any = {};
     if (search) {
-      const searchRegex = new RegExp(search.toString().trim(), "i");
+      const searchRegex = new RegExp(String(search).trim(), "i");
       query.$or = [
         { fileNo: searchRegex },
         { noticeNumber: searchRegex },
@@ -34,10 +33,10 @@ export const getCasesRegister = async (req: Request, res: Response) => {
     }
 
     if (court && court !== "ALL" && court !== "All Courts") {
-      query.courtCode = court;
+      query.courtCode = String(court);
     }
     if (wing && wing !== "ALL" && wing !== "All Wings") {
-      query.sectionWing = wing;
+      query.sectionWing = String(wing);
     }
     if (statusFilter === "with_connected") {
       query["connectedWrits.0"] = { $exists: true };
@@ -49,11 +48,21 @@ export const getCasesRegister = async (req: Request, res: Response) => {
       query.isContemptNotice = true;
     }
 
-    const pageNum = parseInt(page.toString(), 10) || 1;
-    const limitNum = parseInt(limit.toString(), 10) || 10;
+    const pageNum = parseInt(String(page), 10) || 1;
+    const limitNum = parseInt(String(limit), 10) || 10;
     const skip = (pageNum - 1) * limitNum;
+
     const [cases, total] = await Promise.all([
-      Case.find(query).sort({ ndoh: 1, createdAt: -1 }).skip(skip).limit(limitNum).lean(),
+      Case.find(query)
+        .populate("courtId", "courtName shortCode")
+        .populate("caseTypeId", "caseTypeName shortName")
+        .populate("categoryId", "categoryName")
+        .populate("subCategoryId", "subCategoryName")
+        .populate("subjectId", "subjectTitle")
+        .sort({ ndoh: 1, createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
       Case.countDocuments(query),
     ]);
 
@@ -89,7 +98,14 @@ export const getCasesRegister = async (req: Request, res: Response) => {
 
 export const getCaseById = async (req: Request, res: Response) => {
   try {
-    const caseDoc = await Case.findById(req.params.id).lean();
+    const caseDoc = await Case.findById(req.params.id)
+      .populate("courtId", "courtName shortCode location")
+      .populate("caseTypeId", "caseTypeName shortName")
+      .populate("categoryId", "categoryName")
+      .populate("subCategoryId", "subCategoryName defaultOfficerName")
+      .populate("subjectId", "subjectTitle")
+      .lean();
+
     if (!caseDoc) {
       return res.status(404).json({ success: false, message: "Case not found." });
     }
@@ -111,17 +127,23 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
       noticeNumber,
       writNumber,
       cnrNumber,
+      courtId,
       court,
       courtCode,
+      caseTypeId,
       caseType,
+      categoryId,
+      category,
+      subCategoryId,
+      subCategory,
+      subjectId,
+      disputeSubject,
       leadPetitioner,
       respondentString,
       assignedOIC,
       assignedPairokar,
       sectionWing,
-      category,
       examCycle,
-      disputeSubject,
       hasActiveStay,
       isContemptNotice,
       petitioners = [],
@@ -134,6 +156,40 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
         message: "Duplicate litigation docket detected.",
         matchedCase: dupCheck.matchedCase,
       });
+    }
+
+    let resolvedCourt = court || "High Court Allahabad";
+    let resolvedCourtCode = courtCode || "HC-ALD";
+    if (courtId) {
+      const c = await Court.findById(courtId);
+      if (c) {
+        resolvedCourt = c.courtName;
+        resolvedCourtCode = c.shortCode;
+      }
+    }
+
+    let resolvedCaseType = caseType || "WRIT-A";
+    if (caseTypeId) {
+      const ct = await CaseType.findById(caseTypeId);
+      if (ct) resolvedCaseType = ct.shortName || ct.caseTypeName;
+    }
+
+    let resolvedCategory = category || "Recruitment";
+    if (categoryId) {
+      const cat = await CaseCategory.findById(categoryId);
+      if (cat) resolvedCategory = cat.categoryName;
+    }
+
+    let resolvedSubCategory = subCategory || "--";
+    if (subCategoryId) {
+      const scat = await CaseSubCategory.findById(subCategoryId);
+      if (scat) resolvedSubCategory = scat.subCategoryName;
+    }
+
+    let resolvedSubject = disputeSubject || "General Service Matter";
+    if (subjectId) {
+      const s = await CaseSubject.findById(subjectId);
+      if (s) resolvedSubject = s.subjectTitle;
     }
 
     const fileNo = await CaseService.generateNextFileNo();
@@ -155,17 +211,23 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
       writNumber: writNumber || "",
       cnrNumber: cnrNumber ? cnrNumber.toUpperCase() : "",
       identifierTier: tier,
-      court: court || "High Court of Judicature at Allahabad",
-      courtCode: courtCode || "HC-ALD",
-      caseType: caseType || "WRIT-A",
+      courtId: courtId || undefined,
+      court: resolvedCourt,
+      courtCode: resolvedCourtCode,
+      caseTypeId: caseTypeId || undefined,
+      caseType: resolvedCaseType,
+      categoryId: categoryId || undefined,
+      category: resolvedCategory,
+      subCategoryId: subCategoryId || undefined,
+      subCategory: resolvedSubCategory,
+      subjectId: subjectId || undefined,
+      disputeSubject: resolvedSubject,
       leadPetitioner,
       respondentString: respondentString || "State of U.P. & Chairman UPPRPB",
       assignedOIC: assignedOIC || "Unassigned (OIC)",
       assignedPairokar: assignedPairokar || "Unassigned (Pairokar)",
       sectionWing: sectionWing || "Recruitment Wing",
-      category: category || "Constable Civil Police",
       examCycle: examCycle || "2023-24",
-      disputeSubject: disputeSubject || "General Service Matter",
       hasActiveStay: !!hasActiveStay,
       isContemptNotice: !!isContemptNotice,
       coPetitionersCount: petitioners.length,
@@ -177,11 +239,13 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
         caseId: newCase._id,
         fileNo: newCase.fileNo,
         rollNo: p.rollNo,
+        registrationNo: p.registrationNo || "--",
         name: p.name,
         fatherName: p.fatherName || "--",
         role: p.role || "Co-Petitioner",
         categoryClaimed: p.categoryClaimed || "General",
-        postClaimed: p.postClaimed || category,
+        postClaimed: p.postClaimed || resolvedCategory,
+        state: p.state || "Uttar Pradesh",
         district: p.district || "--",
       }));
       await Petitioner.insertMany(petDocs);
@@ -189,7 +253,7 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
 
     await logAuditEvent(
       req,
-      "CASE_INTAKE_REGISTERED",
+      "CASE_INTAKE_REGISTERED" as any,
       "CASE_HUB",
       newCase._id.toString(),
       { fileNo: newCase.fileNo, tier, leadPetitioner },
@@ -206,15 +270,14 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
   }
 };
 
-
 export const checkDuplicateDocket = async (req: Request, res: Response) => {
   try {
     const { fileNo, noticeNumber, writNumber, cnrNumber } = req.query;
     const result = await CaseService.checkDuplicate({
-      fileNo: fileNo?.toString(),
-      noticeNumber: noticeNumber?.toString(),
-      writNumber: writNumber?.toString(),
-      cnrNumber: cnrNumber?.toString(),
+      fileNo: fileNo ? String(fileNo) : undefined,
+      noticeNumber: noticeNumber ? String(noticeNumber) : undefined,
+      writNumber: writNumber ? String(writNumber) : undefined,
+      cnrNumber: cnrNumber ? String(cnrNumber) : undefined,
     });
 
     return res.status(200).json({ success: true, ...result });
@@ -223,7 +286,6 @@ export const checkDuplicateDocket = async (req: Request, res: Response) => {
   }
 };
 
-
 export const triggerCaseSync = async (req: AuthRequest, res: Response) => {
   try {
     const caseId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -231,7 +293,7 @@ export const triggerCaseSync = async (req: AuthRequest, res: Response) => {
 
     await logAuditEvent(
       req,
-      "CASE_ECOURTS_SYNCED",
+      "CASE_ECOURTS_SYNCED" as any,
       "CASE_HUB",
       updatedCase._id.toString(),
       { fileNo: updatedCase.fileNo, ndoh: updatedCase.ndoh },
@@ -247,7 +309,6 @@ export const triggerCaseSync = async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 export const manageConnectedWrits = async (req: Request, res: Response) => {
   try {
@@ -273,7 +334,6 @@ export const manageConnectedWrits = async (req: Request, res: Response) => {
   }
 };
 
-
 export const getCasePetitioners = async (req: Request, res: Response) => {
   try {
     const petitioners = await Petitioner.find({ caseId: req.params.caseId }).lean();
@@ -282,7 +342,6 @@ export const getCasePetitioners = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 export const addCoPetitioner = async (req: Request, res: Response) => {
   try {
@@ -304,7 +363,6 @@ export const addCoPetitioner = async (req: Request, res: Response) => {
   }
 };
 
-
 export const getUnclaimedDiscovery = async (req: Request, res: Response) => {
   try {
     let items: any[] = await Discovery.find({ status: "UNCLAIMED" }).lean();
@@ -319,7 +377,6 @@ export const getUnclaimedDiscovery = async (req: Request, res: Response) => {
   }
 };
 
-
 export const mockVerifyCNR = async (req: Request, res: Response) => {
   try {
     const { cnrNumber } = req.body;
@@ -328,6 +385,45 @@ export const mockVerifyCNR = async (req: Request, res: Response) => {
     }
     const details = await MockJudicialService.verifyCNR(cnrNumber);
     return res.status(200).json({ success: true, details });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const linkDiscoveredWritToNotice = async (req: Request, res: Response) => {
+  try {
+    const { docketNo, caseNoYear, cnrNumber, courtHall, itemNo, listingDate } = req.body;
+
+    const caseDoc = await Case.findOne({ fileNo: docketNo });
+    if (!caseDoc) {
+      return res.status(404).json({ success: false, message: "Notice docket not found." });
+    }
+
+    caseDoc.writNumber = caseNoYear;
+    if (cnrNumber) {
+      caseDoc.cnrNumber = cnrNumber.toUpperCase();
+      caseDoc.identifierTier = 4;
+      caseDoc.syncStatus = "LIVE_SYNCED";
+    } else {
+      caseDoc.identifierTier = 3;
+    }
+
+    if (listingDate) {
+      caseDoc.ndoh = new Date(listingDate);
+    }
+    if (courtHall) {
+      caseDoc.courtRoomNo = courtHall;
+    }
+    caseDoc.listingItemNo = itemNo || "--";
+    caseDoc.stage = "Listed in Cause List";
+
+    await caseDoc.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Docket ${docketNo} successfully upgraded with Writ No: ${caseNoYear}`,
+      case: caseDoc,
+    });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }

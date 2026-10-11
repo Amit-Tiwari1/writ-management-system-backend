@@ -1,6 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
 
-// Sub-document: PDF Marginal Annotation
 export interface IAnnotation {
   _id?: mongoose.Types.ObjectId;
   pageNumber: number;
@@ -22,7 +21,6 @@ const AnnotationSchema = new Schema<IAnnotation>(
   { timestamps: true }
 );
 
-// Primary Case Document File
 export interface ICaseDocument extends Document {
   caseId: mongoose.Types.ObjectId;
   folderCategory: "01_petitions" | "02_notings" | "03_counter_affidavits" | "04_orders" | "05_compliance_proofs";
@@ -55,7 +53,7 @@ const CaseDocumentSchema = new Schema<ICaseDocument>(
     fileSize: { type: Number, required: true },
     mimeType: { type: String, default: "application/pdf" },
     s3Key: { type: String, required: true },
-    s3Bucket: { type: String, default: "lexwrit-legal-docs" },
+    s3Bucket: { type: String, default: "UPPRPB-legal-docs" },
     sha256Hash: { type: String, required: true },
     version: { type: String, default: "v1.0" },
     isVerifiedCopy: { type: Boolean, default: true },
@@ -66,7 +64,6 @@ const CaseDocumentSchema = new Schema<ICaseDocument>(
   { timestamps: true }
 );
 
-// Text Index for OCR Full Text Search (#34)
 CaseDocumentSchema.index({ ocrTextContent: "text", fileName: "text" });
 
 export const CaseDocument = mongoose.model<ICaseDocument>("CaseDocument", CaseDocumentSchema);

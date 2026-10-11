@@ -2,40 +2,104 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import { NotingMinute } from "../models/Noting";
 import { Case } from "../models/Case";
+import { User } from "../models/User";
+import { Notification } from "../models/Notification";
 import { AuthRequest } from "../middlewares/authMiddleware";
 
-// 35. GET /api/v1/cases/:caseId/notings (Chronological Minutes Ledger)
-export const getCaseNotings = async (req: Request, res: Response) => {
+export const getForwardableOfficers = async (
+  req: AuthRequest,
+  res: Response,
+) => {
   try {
-    const { caseId } = req.params;
-    const minutes = await NotingMinute.find({ caseId }).sort({ minuteNumber: 1 });
+    const currentUserId = req.user?.id;
+    const query: any = { status: "ACTIVE" };
+    if (currentUserId) {
+      query._id = { $ne: currentUserId };
+    }
 
-    res.status(200).json({
+    const officers = await User.find(query)
+      .select("_id name username rank designation section role")
+      .sort({ name: 1 })
+      .lean();
+
+    return res.status(200).json({
       success: true,
-      totalMinutes: minutes.length,
-      data: minutes,
+      count: officers.length,
+      data: officers.map((u) => ({
+        userId: u._id,
+        displayName: `${u.name} — ${u.designation} (${u.section})`,
+        name: u.name,
+        designation: u.designation,
+        section: u.section,
+        role: u.role,
+      })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 36. POST /api/v1/cases/:caseId/notings/draft (Create / Update In-Progress Draft)
+export const getCaseNotings = async (req: Request, res: Response) => {
+  try {
+    const { caseId } = req.params;
+    const minutes = await NotingMinute.find({ caseId })
+      .populate("forwardToUserId", "name designation section")
+      .sort({ minuteNumber: 1 })
+      .lean();
+
+    const signedCount = minutes.filter(
+      (m) => m.status === "SIGNED_AND_FORWARDED",
+    ).length;
+    const currentDraft = minutes.find((m) => m.status === "DRAFT");
+
+    return res.status(200).json({
+      success: true,
+      totalMinutes: minutes.length,
+      signedMinutesCount: signedCount,
+      activeDraft: currentDraft || null,
+      data: minutes,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
   try {
     const { caseId } = req.params;
-    const { content, subjectLine, isUrgentDak } = req.body;
+    const {
+      content,
+      minuteTitle,
+      notingPurpose,
+      fontEncoding,
+      forwardToUserId,
+      turnaroundDueDate,
+      fileUrgency,
+    } = req.body;
 
     if (!content) {
-      return res.status(400).json({ success: false, message: "Noting content cannot be empty" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Noting text cannot be empty." });
     }
 
     const caseItem = await Case.findById(caseId);
     if (!caseItem) {
-      return res.status(404).json({ success: false, message: "Case file not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Case file not found." });
     }
 
-    // Check if user already has an active unsaved draft on this case
+    let targetOfficerName = "";
+    let targetOfficerDesignation = "";
+    if (forwardToUserId) {
+      const targetUser = await User.findById(forwardToUserId);
+      if (targetUser) {
+        targetOfficerName = targetUser.name;
+        targetOfficerDesignation = targetUser.designation;
+      }
+    }
+
     let draft = await NotingMinute.findOne({
       caseId,
       authorId: req.user?.id,
@@ -44,92 +108,157 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
 
     if (draft) {
       draft.content = content;
-      draft.subjectLine = subjectLine || draft.subjectLine;
-      draft.isUrgentDak = isUrgentDak !== undefined ? isUrgentDak : draft.isUrgentDak;
+      if (minuteTitle) draft.minuteTitle = minuteTitle;
+      if (notingPurpose) draft.notingPurpose = notingPurpose;
+      if (fontEncoding) draft.fontEncoding = fontEncoding;
+      if (forwardToUserId) draft.forwardToUserId = forwardToUserId;
+      if (targetOfficerName) draft.forwardedToOfficerName = targetOfficerName;
+      if (targetOfficerDesignation)
+        draft.forwardedToDesignation = targetOfficerDesignation;
+      if (turnaroundDueDate)
+        draft.turnaroundDueDate = new Date(turnaroundDueDate);
+      if (fileUrgency) draft.fileUrgency = fileUrgency;
       await draft.save();
     } else {
-      const highestMinute = await NotingMinute.findOne({ caseId }).sort({ minuteNumber: -1 });
-      const nextMinuteNo = highestMinute ? highestMinute.minuteNumber + 1 : 1;
+      const highest = await NotingMinute.findOne({ caseId }).sort({
+        minuteNumber: -1,
+      });
+      const nextMinuteNo = highest ? highest.minuteNumber + 1 : 1;
 
       draft = await NotingMinute.create({
         caseId,
         minuteNumber: nextMinuteNo,
-        authorId: req.user?.id,
-        authorName: req.user?.name || req.user?.username || "Officer-in-Charge",
-        authorDesignation: req.user?.designation || "Legal Officer",
-        subjectLine: subjectLine || `Minute #${nextMinuteNo} regarding Case Compliance`,
+        minuteTitle:
+          minuteTitle ||
+          `Minute #${nextMinuteNo} — ${notingPurpose || "PWC / Legal Opinion"}`,
+        notingPurpose: notingPurpose || "PWC / Legal Opinion",
+        fontEncoding: fontEncoding || "Unicode",
         content,
+        authorId: req.user?.id,
+        authorName: req.user?.name || req.user?.username || "Legal Officer",
+        authorDesignation: req.user?.designation || "Dealing Assistant",
+        forwardToUserId: forwardToUserId || undefined,
+        forwardedToOfficerName: targetOfficerName,
+        forwardedToDesignation: targetOfficerDesignation,
+        turnaroundDueDate: turnaroundDueDate
+          ? new Date(turnaroundDueDate)
+          : undefined,
+        fileUrgency: fileUrgency || "High Priority (NDOH)",
         status: "DRAFT",
-        isUrgentDak: !!isUrgentDak,
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Draft noting persisted in electronic docket",
+      message: "Draft minute saved successfully.",
       data: draft,
     });
   } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+    return res.status(400).json({ success: false, message: err.message });
   }
 };
 
-// 37. POST /api/v1/cases/:caseId/notings/sign-and-forward (Cryptographic Seal & Dak Dispatch)
 export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
   try {
     const { caseId } = req.params;
     const {
       minuteId,
       content,
-      forwardToOfficerName,
-      forwardToDesignation,
-      isUrgentDak,
+      minuteTitle,
+      notingPurpose,
+      fontEncoding,
+      forwardToUserId,
+      turnaroundDueDate,
+      fileUrgency,
     } = req.body;
 
     const caseItem = await Case.findById(caseId);
     if (!caseItem) {
-      return res.status(404).json({ success: false, message: "Case file not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Case file not found." });
+    }
+
+    if (!forwardToUserId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Recipient officer (forwardToUserId) is required to route the dak.",
+      });
+    }
+
+    const recipientUser = await User.findById(forwardToUserId);
+    if (!recipientUser) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Target recipient officer not found.",
+        });
+    }
+    if (String(forwardToUserId) === String(req.user?.id)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Protocol Rule: An officer cannot forward a legal file to their own desk.",
+      });
     }
 
     let minute: any;
-
     if (minuteId) {
       minute = await NotingMinute.findById(minuteId);
     } else {
-      // Find current draft
-      minute = await NotingMinute.findOne({ caseId, authorId: req.user?.id, status: "DRAFT" });
+      minute = await NotingMinute.findOne({
+        caseId,
+        authorId: req.user?.id,
+        status: "DRAFT",
+      });
     }
 
     if (!minute) {
-      // Create and directly sign
-      const highestMinute = await NotingMinute.findOne({ caseId }).sort({ minuteNumber: -1 });
-      const nextMinuteNo = highestMinute ? highestMinute.minuteNumber + 1 : 1;
+      const highest = await NotingMinute.findOne({ caseId }).sort({
+        minuteNumber: -1,
+      });
+      const nextMinuteNo = highest ? highest.minuteNumber + 1 : 1;
 
       minute = new NotingMinute({
         caseId,
         minuteNumber: nextMinuteNo,
         authorId: req.user?.id,
         authorName: req.user?.name || req.user?.username || "Legal Officer",
-        authorDesignation: req.user?.designation || "Officer-in-Charge",
+        authorDesignation:
+          req.user?.designation || "Sub Inspector (Legal Desk)",
       });
     }
 
     if (content) minute.content = content;
+    if (minuteTitle) minute.minuteTitle = minuteTitle;
+    if (notingPurpose) minute.notingPurpose = notingPurpose;
+    if (fontEncoding) minute.fontEncoding = fontEncoding;
+    if (turnaroundDueDate)
+      minute.turnaroundDueDate = new Date(turnaroundDueDate);
+    if (fileUrgency) minute.fileUrgency = fileUrgency;
 
     const signTimestamp = new Date();
-    // Cryptographic Seal SHA-256 (Payload + User + Timestamp)
     const sealData = `${minute.caseId}_${minute.minuteNumber}_${minute.content}_${req.user?.id}_${signTimestamp.toISOString()}`;
-    const sha256Seal = crypto.createHash("sha256").update(sealData).digest("hex");
-    const certSerial = `DSC-IN-UP-${crypto.randomBytes(4).toString("hex").toUpperCase()}-2026`;
+    const sha256Seal = crypto
+      .createHash("sha256")
+      .update(sealData)
+      .digest("hex");
+    const certSerial = `DSP-SIG-${Math.floor(10000 + Math.random() * 90000)}`;
 
+    minute.minuteTitle =
+      minute.minuteTitle ||
+      `Minute #${minute.minuteNumber} — ${minute.notingPurpose}`;
     minute.status = "SIGNED_AND_FORWARDED";
-    minute.forwardedToOfficerName = forwardToOfficerName || "Head of Legal Cell";
-    minute.forwardedToDesignation = forwardToDesignation || "Additional Secretary / ADG";
-    minute.isUrgentDak = !!isUrgentDak;
+    minute.forwardToUserId = recipientUser._id;
+    minute.forwardedToOfficerName = recipientUser.name;
+    minute.forwardedToDesignation = recipientUser.designation;
+
     minute.signature = {
       signerName: req.user?.name || req.user?.username || "Legal Officer",
-      signerDesignation: req.user?.designation || "Officer-in-Charge (OIC)",
-      signerSection: req.user?.section || "Legal Cell",
+      signerDesignation: req.user?.designation || "Sub Inspector (Legal Desk)",
+      signerSection: req.user?.section || "Legal Cell (UPPRPB HQ)",
       signedAt: signTimestamp,
       certificateSerialNumber: certSerial,
       issuerAuthority: "eMudhra Sub-CA Class 3 Institutional Signature",
@@ -139,30 +268,51 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
 
     await minute.save();
 
-    // Update case active custodian assignment if forwarded
-    if (forwardToOfficerName) {
-      caseItem.assignedOIC = forwardToOfficerName;
-      await caseItem.save();
-    }
+    // Re-route Case's internal hold & currentHolderId
+    caseItem.assignedOIC = recipientUser.name;
+    caseItem.internalHold = {
+      currentHolderId: recipientUser._id,
+      location: `${recipientUser.designation} (${recipientUser.name})`,
+      holdDays: 0,
+      heldSince: signTimestamp,
+    };
+    await caseItem.save();
 
-    res.status(200).json({
+    // Generate Targeted Notification for Officer
+    await Notification.create({
+      recipientId: recipientUser._id,
+      caseId: caseItem._id,
+      fileNo: caseItem.fileNo,
+      type: "FILE_FORWARDED",
+      title: `Dak Received: ${caseItem.fileNo}`,
+      message: `File has been forwarded to your desk by ${minute.signature.signerName} (${minute.signature.signerDesignation}) for ${minute.notingPurpose}.`,
+      isUrgent: minute.fileUrgency === "High Priority (NDOH)",
+      senderName: minute.signature.signerName,
+      senderDesignation: minute.signature.signerDesignation,
+    });
+
+    return res.status(200).json({
       success: true,
-      message: `Minute #${minute.minuteNumber} digitally signed and dispatched to ${minute.forwardedToOfficerName}`,
+      message: `Minute #${minute.minuteNumber} digitally signed [${certSerial}] and forwarded to ${recipientUser.name}.`,
       data: minute,
     });
   } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+    return res.status(400).json({ success: false, message: err.message });
   }
 };
 
-// 38. GET /api/v1/cases/:caseId/notings/:minuteNo/verify-signature (Cryptographic DSC Seal Verifier)
 export const verifyMinuteSignature = async (req: Request, res: Response) => {
   try {
     const { caseId, minuteNo } = req.params;
-    const minute = await NotingMinute.findOne({ caseId, minuteNumber: Number(minuteNo) });
+    const minute = await NotingMinute.findOne({
+      caseId,
+      minuteNumber: Number(minuteNo),
+    });
 
     if (!minute) {
-      return res.status(404).json({ success: false, message: "Minute record not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Minute record not found." });
     }
 
     if (!minute.signature || !minute.signature.sha256Seal) {
@@ -173,12 +323,13 @@ export const verifyMinuteSignature = async (req: Request, res: Response) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       isSigned: true,
       verificationStatus: "VALID_CRYPTOGRAPHIC_SEAL",
       auditDetails: {
         minuteNumber: minute.minuteNumber,
+        minuteTitle: minute.minuteTitle,
         signedBy: minute.signature.signerName,
         designation: minute.signature.signerDesignation,
         section: minute.signature.signerSection,
@@ -190,45 +341,53 @@ export const verifyMinuteSignature = async (req: Request, res: Response) => {
       },
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 39. GET /api/v1/cases/:caseId/notings/print-memo (Formal Printable Green Sheet Memo)
 export const generatePrintMemo = async (req: Request, res: Response) => {
   try {
     const { caseId } = req.params;
     const [caseItem, minutes] = await Promise.all([
-      Case.findById(caseId),
-      NotingMinute.find({ caseId, status: "SIGNED_AND_FORWARDED" }).sort({ minuteNumber: 1 }),
+      Case.findById(caseId).lean(),
+      NotingMinute.find({ caseId, status: "SIGNED_AND_FORWARDED" })
+        .sort({ minuteNumber: 1 })
+        .lean(),
     ]);
 
     if (!caseItem) {
-      return res.status(404).json({ success: false, message: "Case not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found." });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       memoHeader: {
-        institution: "GOVERNMENT OF UTTAR PRADESH",
-        department: "LEGAL WRIT CELL / APEX SECRETARIAT",
-        docketNo: caseItem.fileDocketNo,
+        institution: "UTTAR PRADESH POLICE RECRUITMENT AND PROMOTION BOARD",
+        subHeader: "SECRETARIAT FILE NOTING & LEGAL LEDGER",
+        fileNo: caseItem.fileNo,
+        writNumber: caseItem.writNumber,
         cnrNumber: caseItem.cnrNumber,
         courtBench: caseItem.court,
         parties: `${caseItem.leadPetitioner} vs. ${caseItem.respondentString}`,
+        currentHolder: caseItem.assignedOIC,
         printedAt: new Date().toISOString(),
       },
       totalSignedMinutes: minutes.length,
       ledgerMinutes: minutes.map((m) => ({
         minuteNo: m.minuteNumber,
+        minuteTitle: m.minuteTitle,
+        purpose: m.notingPurpose,
         content: m.content,
         signedBy: m.signature?.signerName,
         designation: m.signature?.signerDesignation,
         signedAt: m.signature?.signedAt,
+        certSerial: m.signature?.certificateSerialNumber,
         seal: m.signature?.sha256Seal,
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };

@@ -1,12 +1,17 @@
 import {
+  State,
+  Zone,
+  Range,
   District,
-  Department,
-  Rank,
-  Designation,
   Court,
   CaseType,
-  Taxonomy,
-  CustodianMap,
+  CaseCategory,
+  CaseSubCategory,
+  CaseSubject,
+  SubjectCustodian,
+  Rank,
+  Designation,
+  Department,
   RespondentGroup,
   ActionMapping,
   Alias,
@@ -14,29 +19,77 @@ import {
 } from "../models/Masters";
 
 export class MasterService {
+  /**
+   * Fast Dropdown Bundle: Initial form rendering bundle
+   */
   static async getCaseIntakeDropdowns() {
-    const [districts, courts, caseTypes, ranks, designations, taxonomies] = await Promise.all([
-      District.find().select("districtName zone range").sort({ districtName: 1 }).lean(),
-      Court.find().select("courtName shortCode location").lean(),
-      CaseType.find().select("code title court").sort({ code: 1 }).lean(),
-      Rank.find().select("rankName shortCode").lean(),
-      Designation.find().select("title authorityLevel").lean(),
-      Taxonomy.find().select("category examCycle issue").lean(),
-    ]);
+    const [states, districts, courts, caseTypes, categories, ranks, designations, departments] =
+      await Promise.all([
+        State.find().select("stateName stateCode").sort({ stateName: 1 }).lean(),
+        District.find()
+          .populate("stateId", "stateName stateCode")
+          .populate("zoneId", "zoneName")
+          .populate("rangeId", "rangeName")
+          .sort({ districtName: 1 })
+          .lean(),
+        Court.find().select("courtName shortCode location").lean(),
+        CaseType.find().populate("courtId", "courtName shortCode").sort({ caseTypeName: 1 }).lean(),
+        CaseCategory.find().sort({ order: 1 }).lean(),
+        Rank.find().select("rankName shortCode").lean(),
+        Designation.find().select("title authorityLevel").lean(),
+        Department.find().select("unitName unitCode").lean(),
+      ]);
 
     return {
+      states,
       districts,
       courts,
       caseTypes,
+      categories,
       ranks,
       designations,
-      taxonomies,
+      departments,
     };
   }
 
- 
-  static async getAllDistricts() {
-    return District.find().sort({ districtName: 1 }).lean();
+  // --- 1. Judicial Cascading ---
+  static async getCaseTypesByCourt(courtId: string) {
+    return CaseType.find({ courtId }).sort({ caseTypeName: 1 }).lean();
+  }
+
+  // --- 2. Taxonomy Cascading ---
+  static async getSubCategoriesByCategory(categoryId: string) {
+    return CaseSubCategory.find({ categoryId }).sort({ subCategoryName: 1 }).lean();
+  }
+
+  static async getSubjectsBySubCategory(subCategoryId: string) {
+    return CaseSubject.find({ subCategoryId }).sort({ subjectTitle: 1 }).lean();
+  }
+
+  static async getSubjectCustodians() {
+    return SubjectCustodian.find()
+      .populate("subjectId", "subjectTitle")
+      .populate("categoryId", "categoryName")
+      .lean();
+  }
+
+  // --- Geographic Helpers ---
+  static async getAllStates() {
+    return State.find().sort({ stateName: 1 }).lean();
+  }
+
+  static async getDistrictsByRangeOrState(filter: { stateId?: string; zoneId?: string; rangeId?: string }) {
+    const query: any = {};
+    if (filter.stateId) query.stateId = filter.stateId;
+    if (filter.zoneId) query.zoneId = filter.zoneId;
+    if (filter.rangeId) query.rangeId = filter.rangeId;
+
+    return District.find(query)
+      .populate("stateId", "stateName stateCode")
+      .populate("zoneId", "zoneName")
+      .populate("rangeId", "rangeName")
+      .sort({ districtName: 1 })
+      .lean();
   }
 
   static async getAllDepartments() {
@@ -51,22 +104,6 @@ export class MasterService {
     return Designation.find().sort({ title: 1 }).lean();
   }
 
-  static async getAllCourtsAndTypes() {
-    const [courts, caseTypes] = await Promise.all([
-      Court.find().lean(),
-      CaseType.find().sort({ code: 1 }).lean(),
-    ]);
-    return { courts, caseTypes };
-  }
-
-  static async getAllTaxonomy() {
-    return Taxonomy.find().sort({ category: 1 }).lean();
-  }
-
-  static async getAllCustodianMaps() {
-    return CustodianMap.find().lean();
-  }
-
   static async getAllRespondentGroups() {
     return RespondentGroup.find().sort({ groupName: 1 }).lean();
   }
@@ -76,10 +113,7 @@ export class MasterService {
   }
 
   static async getAllAliasesAndCounsels() {
-    const [aliases, counsels] = await Promise.all([
-      Alias.find().lean(),
-      StandingCounsel.find().lean(),
-    ]);
+    const [aliases, counsels] = await Promise.all([Alias.find().lean(), StandingCounsel.find().lean()]);
     return { aliases, counsels };
   }
 }

@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
-const JWT_SECRET = process.env.JWT_SECRET || "lexwrit_enterprise_super_secret_key_2026";
+const JWT_SECRET = process.env.JWT_SECRET || "upprpb_enterprise_super_secret_key_2026";
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_DAYS = 7;
 

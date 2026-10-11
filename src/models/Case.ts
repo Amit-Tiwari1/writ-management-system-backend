@@ -1,6 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
 
-// --- Sub-document: Connected Writ Summary ---
 export interface IConnectedWrit {
   caseId?: mongoose.Types.ObjectId;
   writNumber: string;
@@ -24,29 +23,45 @@ export interface ICase extends Document {
   cnrNumber?: string;
   identifierTier: 1 | 2 | 3 | 4;
 
+  // Master Relational References
+  courtId?: mongoose.Types.ObjectId;
   court: string;
   courtCode: string;
+
+  caseTypeId?: mongoose.Types.ObjectId;
   caseType: string;
+
   caseNumber?: string;
   caseYear?: number;
   benchLocation: "Allahabad" | "Lucknow" | "New Delhi";
   courtRoomNo?: string;
   coramBench?: string;
+
   leadPetitioner: string;
   respondentString: string;
   petitionerAdvocate?: string;
   stateCounsel?: string;
 
+  // Administrative & Taxonomy Links
   assignedOIC: string;
   assignedPairokar: string;
   sectionWing: string;
+
+  categoryId?: mongoose.Types.ObjectId;
   category: string;
-  examCycle: string;
+
+  subCategoryId?: mongoose.Types.ObjectId;
+  subCategory?: string;
+
+  subjectId?: mongoose.Types.ObjectId;
   disputeSubject: string;
+
+  examCycle: string;
 
   stage: string;
   judicialStatus: "PRE_NOTICE" | "ACTIVE" | "PENDING_PWC" | "STAY_IN_FORCE" | "CONTEMPT_NOTICE" | "DISPOSED" | "ARCHIVED";
   internalHold: {
+    currentHolderId?: mongoose.Types.ObjectId;
     location: string;
     holdDays: number;
     heldSince?: Date;
@@ -60,6 +75,7 @@ export interface ICase extends Document {
   stayVacationDueDate?: Date;
   isContemptNotice: boolean;
   contemptDeadlineDate?: Date;
+
   connectedWrits: IConnectedWrit[];
   coPetitionersCount: number;
 
@@ -72,10 +88,13 @@ export interface ICase extends Document {
     rawForwarded?: string;
     orderStatus?: string;
   };
+  
 
   createdAt: Date;
   updatedAt: Date;
 }
+
+
 
 const CaseSchema = new Schema<ICase>(
   {
@@ -85,9 +104,13 @@ const CaseSchema = new Schema<ICase>(
     cnrNumber: { type: String, trim: true, default: "", uppercase: true, index: true },
     identifierTier: { type: Number, enum: [1, 2, 3, 4], default: 1 },
 
+    courtId: { type: Schema.Types.ObjectId, ref: "Court" },
     court: { type: String, required: true },
     courtCode: { type: String, default: "HC-ALD" },
+
+    caseTypeId: { type: Schema.Types.ObjectId, ref: "CaseType" },
     caseType: { type: String, default: "WRIT-A" },
+
     caseNumber: { type: String, default: "" },
     caseYear: { type: Number, default: new Date().getFullYear() },
     benchLocation: { type: String, enum: ["Allahabad", "Lucknow", "New Delhi"], default: "Allahabad" },
@@ -102,9 +125,15 @@ const CaseSchema = new Schema<ICase>(
     assignedOIC: { type: String, default: "Unassigned (OIC)" },
     assignedPairokar: { type: String, default: "Unassigned (Pairokar)" },
     sectionWing: { type: String, default: "Recruitment Wing" },
-    category: { type: String, default: "Constable Civil Police" },
-    examCycle: { type: String, default: "2023-24" },
+    categoryId: { type: Schema.Types.ObjectId, ref: "CaseCategory" },
+    category: { type: String, default: "Recruitment" },
+    subCategoryId: { type: Schema.Types.ObjectId, ref: "CaseSubCategory" },
+    subCategory: { type: String, default: "--" },
+
+    subjectId: { type: Schema.Types.ObjectId, ref: "CaseSubject" },
     disputeSubject: { type: String, default: "General Service Matter" },
+
+    examCycle: { type: String, default: "2023-24" },
 
     stage: { type: String, default: "Advance Notice Stage" },
     judicialStatus: {
@@ -113,6 +142,7 @@ const CaseSchema = new Schema<ICase>(
       default: "ACTIVE",
     },
     internalHold: {
+      currentHolderId: { type: Schema.Types.ObjectId, ref: "User", index: true },
       location: { type: String, default: "Legal Desk" },
       holdDays: { type: Number, default: 0 },
       heldSince: { type: Date, default: Date.now },

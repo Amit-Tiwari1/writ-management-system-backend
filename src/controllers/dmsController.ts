@@ -1,16 +1,14 @@
 import { Request, Response } from "express";
-import crypto from "crypto";
 import { CaseDocument } from "../models/DocumentDMS";
 import { Case } from "../models/Case";
+import { StorageService } from "../services/storageService";
 import { AuthRequest } from "../middlewares/authMiddleware";
 
-// 27. GET /api/v1/cases/:caseId/documents (Folder Tree & Files)
 export const getCaseDocuments = async (req: Request, res: Response) => {
   try {
     const { caseId } = req.params;
-    const documents = await CaseDocument.find({ caseId }).sort({ createdAt: -1 });
+    const documents = await CaseDocument.find({ caseId }).sort({ createdAt: -1 }).lean();
 
-    // Grouping by standard 5 case folders
     const structuredFolders = {
       "01_petitions": documents.filter((d) => d.folderCategory === "01_petitions"),
       "02_notings": documents.filter((d) => d.folderCategory === "02_notings"),
@@ -19,193 +17,210 @@ export const getCaseDocuments = async (req: Request, res: Response) => {
       "05_compliance_proofs": documents.filter((d) => d.folderCategory === "05_compliance_proofs"),
     };
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       totalCount: documents.length,
       data: structuredFolders,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 28. POST /api/v1/cases/:caseId/documents/presigned-url
-export const getPresignedUploadUrl = async (req: AuthRequest, res: Response) => {
+export const uploadCaseDocument = async (req: AuthRequest, res: Response) => {
   try {
     const { caseId } = req.params;
-    const { fileName, folderCategory } = req.body;
+    const { folderCategory, ocrTextContent } = req.body;
+    const file = (req as any).file as Express.Multer.File;
 
-    if (!fileName || !folderCategory) {
-      return res.status(400).json({ success: false, message: "fileName and folderCategory are required" });
+    if (!file) {
+      return res.status(400).json({ success: false, message: "File is required under field 'file'." });
     }
 
-    const uniqueId = crypto.randomBytes(8).toString("hex");
-    const sanitizedName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const s3Key = `cases/${caseId}/${folderCategory}/${uniqueId}-${sanitizedName}`;
-
-    // Mock/Simulated S3 MinIO presigned URL
-    const uploadUrl = `https://s3.lexwrit.internal/lexwrit-legal-docs/${s3Key}?X-Amz-Signature=mock_signature_${uniqueId}`;
-
-    res.status(200).json({
-      success: true,
-      data: {
-        uploadUrl,
-        s3Key,
-        s3Bucket: "lexwrit-legal-docs",
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 29. POST /api/v1/cases/:caseId/documents/confirm-upload
-export const confirmDocumentUpload = async (req: AuthRequest, res: Response) => {
-  try {
-    const { caseId } = req.params;
-    const { fileName, originalName, folderCategory, fileSize, s3Key, sha256Hash, mimeType } = req.body;
-
-    const caseExists = await Case.findById(caseId);
-    if (!caseExists) {
-      return res.status(404).json({ success: false, message: "Associated Case not found" });
+    const caseDoc = await Case.findById(caseId);
+    if (!caseDoc) {
+      return res.status(404).json({ success: false, message: "Associated Case not found." });
     }
 
-    // Auto-generate SHA-256 hash if not sent from client
-    const fileHash = sha256Hash || crypto.createHash("sha256").update(s3Key + Date.now()).digest("hex");
+    const folderSlug = (folderCategory || "01_petitions").trim();
+    const caseSlug = caseDoc.fileNo.replace(/\//g, "_");
+    const targetFolder = `cases/${caseSlug}/${folderSlug}`;
+
+    const storageRes = await StorageService.uploadFile(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+      targetFolder
+    );
 
     const newDoc = await CaseDocument.create({
       caseId,
-      folderCategory,
-      fileName,
-      originalName: originalName || fileName,
-      fileSize: fileSize || 1024 * 500, // default 500KB
-      mimeType: mimeType || "application/pdf",
-      s3Key,
-      sha256Hash: fileHash,
+      folderCategory: folderSlug,
+      fileName: file.originalname,
+      originalName: file.originalname,
+      fileSize: storageRes.fileSize,
+      mimeType: storageRes.mimeType,
+      s3Key: storageRes.publicId,
+      s3Bucket: storageRes.secureUrl,
+      sha256Hash: storageRes.sha256Hash,
       version: "v1.0",
       isVerifiedCopy: true,
       uploadedBy: req.user?.username || "Legal Officer",
+      ocrTextContent: ocrTextContent || "",
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "Document committed to encrypted DMS ledger",
-      data: newDoc,
+      message: "Document stored in Cloudinary & audited in DMS ledger.",
+      document: newDoc,
     });
   } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 30. GET /api/v1/cases/:caseId/documents/:docId/view
+export const replaceCaseDocument = async (req: AuthRequest, res: Response) => {
+  try {
+    const { docId } = req.params;
+    const file = (req as any).file as Express.Multer.File;
+
+    if (!file) {
+      return res.status(400).json({ success: false, message: "New file is required under field 'file'." });
+    }
+
+    const existingDoc = await CaseDocument.findById(docId);
+    if (!existingDoc) {
+      return res.status(404).json({ success: false, message: "Document not found." });
+    }
+
+    const caseDoc = await Case.findById(existingDoc.caseId);
+    const caseSlug = caseDoc ? caseDoc.fileNo.replace(/\//g, "_") : "general";
+    const targetFolder = `cases/${caseSlug}/${existingDoc.folderCategory}`;
+
+    const storageRes = await StorageService.replaceFile(
+      existingDoc.s3Key,
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+      targetFolder,
+      existingDoc.mimeType.includes("pdf")
+    );
+
+    const currentVersionNum = parseFloat(existingDoc.version.replace("v", "")) || 1.0;
+    const newVersion = `v${(currentVersionNum + 0.1).toFixed(1)}`;
+
+    existingDoc.fileName = file.originalname;
+    existingDoc.originalName = file.originalname;
+    existingDoc.fileSize = storageRes.fileSize;
+    existingDoc.mimeType = storageRes.mimeType;
+    existingDoc.s3Key = storageRes.publicId;
+    existingDoc.s3Bucket = storageRes.secureUrl;
+    existingDoc.sha256Hash = storageRes.sha256Hash;
+    existingDoc.version = newVersion;
+    existingDoc.uploadedBy = req.user?.username || "Legal Officer";
+    await existingDoc.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Document upgraded to version ${newVersion}.`,
+      document: existingDoc,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const deleteCaseDocument = async (req: AuthRequest, res: Response) => {
+  try {
+    const { docId } = req.params;
+    const doc = await CaseDocument.findById(docId);
+    if (!doc) return res.status(404).json({ success: false, message: "Document not found." });
+
+    if (doc.folderCategory === "04_orders" && doc.isVerifiedCopy) {
+      return res.status(403).json({
+        success: false,
+        message: "Legal Guard: Certified Court Orders cannot be purged from the dossier.",
+      });
+    }
+
+    await StorageService.deleteFile(doc.s3Key, doc.mimeType.includes("pdf"));
+    await CaseDocument.findByIdAndDelete(docId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Document purged successfully from storage ledger.",
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 export const viewDocumentStream = async (req: Request, res: Response) => {
   try {
     const doc = await CaseDocument.findById(req.params.docId);
-    if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
+    if (!doc) return res.status(404).json({ success: false, message: "Document not found." });
 
-    // Mock secure temporary view token URL
-    const secureViewUrl = `https://dms.lexwrit.internal/view/${doc.s3Key}?token=view_${crypto.randomBytes(16).toString("hex")}`;
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       documentName: doc.fileName,
       mimeType: doc.mimeType,
       sha256Hash: doc.sha256Hash,
-      viewUrl: secureViewUrl,
+      viewUrl: doc.s3Bucket,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 31. GET /api/v1/cases/:caseId/documents/:docId/download
-export const downloadDocument = async (req: Request, res: Response) => {
-  try {
-    const doc = await CaseDocument.findById(req.params.docId);
-    if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
-
-    const downloadUrl = `https://dms.lexwrit.internal/download/${doc.s3Key}?disposition=attachment`;
-
-    res.status(200).json({
-      success: true,
-      downloadUrl,
-      fileName: doc.fileName,
-      sha256Hash: doc.sha256Hash,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 32. POST /api/v1/cases/:caseId/documents/:docId/annotations
 export const addAnnotation = async (req: AuthRequest, res: Response) => {
   try {
     const { pageNumber, selectedText, comment } = req.body;
     const doc = await CaseDocument.findById(req.params.docId);
-    if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
+    if (!doc) return res.status(404).json({ success: false, message: "Document not found." });
 
-    const annotation = {
+    doc.annotations.push({
       pageNumber: Number(pageNumber),
       selectedText: selectedText || "",
       comment,
       authorName: req.user?.username || "Legal Officer",
       authorDesignation: req.user?.role || "Staff Officer",
-    };
+    } as any);
 
-    doc.annotations.push(annotation as any);
     await doc.save();
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "Marginal annotation pinned to document",
+      message: "Marginal annotation pinned to document.",
       data: doc.annotations,
     });
   } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+    return res.status(400).json({ success: false, message: err.message });
   }
 };
 
-// 33. GET /api/v1/cases/:caseId/documents/:docId/annotations
-export const getAnnotations = async (req: Request, res: Response) => {
-  try {
-    const doc = await CaseDocument.findById(req.params.docId);
-    if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
-
-    res.status(200).json({
-      success: true,
-      count: doc.annotations.length,
-      data: doc.annotations,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 34. GET /api/v1/cases/:caseId/documents/search-ocr
 export const searchDocumentsOCR = async (req: Request, res: Response) => {
   try {
     const { caseId } = req.params;
     const { q } = req.query;
 
     if (!q) {
-      return res.status(400).json({ success: false, message: "Search keyword 'q' is required" });
+      return res.status(400).json({ success: false, message: "Search keyword 'q' is required." });
     }
 
     const matches = await CaseDocument.find({
       caseId,
       $or: [
-        { fileName: { $regex: q as string,$options: "i" } },
-        { ocrTextContent: { $regex: q as string,$options: "i" } },
+        { fileName: { $regex: String(q),$options: "i" } },
+        { ocrTextContent: { $regex: String(q),$options: "i" } },
       ],
-    }).select("fileName folderCategory sha256Hash createdAt");
+    }).select("fileName folderCategory sha256Hash version createdAt");
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       query: q,
       matchCount: matches.length,
       data: matches,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };

@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { User } from "../models/User";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import { comparePassword } from "../utils/passwordUtils";
-import { generateAccessToken, generateRefreshToken, verifyAccessToken } from "../utils/tokenUtils";
+import { generateAccessToken, generateRefreshToken } from "../utils/tokenUtils";
 import { logAuditEvent } from "../utils/auditLogger";
 import { AuthService } from "../services/authService";
 
@@ -20,11 +20,22 @@ export const login = async (req: Request, res: Response) => {
     if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: "Username and password are required.",
+        message: "Username / Mobile / Email and password are required.",
       });
     }
 
-    const user = await User.findOne({ username: username.toLowerCase().trim() });
+    const identifier = String(username).trim();
+    const cleanLower = identifier.toLowerCase();
+
+    // Flexible identifier check: username OR mobile OR email
+    const user = await User.findOne({
+      $or: [
+        { username: cleanLower },
+        { mobile: identifier },
+        { email: cleanLower },
+      ],
+    });
+
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -79,7 +90,7 @@ export const login = async (req: Request, res: Response) => {
       authReq,
       "USER_LOGIN",
       "AUTH",
-      user._id.toString(),
+      `User ${user.username} authenticated successfully`,
       { username: user.username, role: user.role, status: "SUCCESS" },
       "INFO"
     );
@@ -119,7 +130,6 @@ export const refreshToken = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: "Refresh token is missing." });
     }
 
-    // Refresh token validation logic
     return res.status(200).json({
       success: true,
       message: "Token refreshed successfully.",
@@ -131,19 +141,17 @@ export const refreshToken = async (req: Request, res: Response) => {
 
 export const logout = async (req: AuthRequest, res: Response) => {
   try {
-    // Create Audit Log for Logout
     if (req.user) {
       await logAuditEvent(
         req,
         "USER_LOGOUT",
         "AUTH",
-        req.user.id,
+        `User ${req.user.username} logged out`,
         { username: req.user.username },
         "INFO"
       );
     }
 
-    // Clear Cookies
     res.clearCookie("access_token");
     res.clearCookie("refresh_token");
 

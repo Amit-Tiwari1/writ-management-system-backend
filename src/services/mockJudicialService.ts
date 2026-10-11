@@ -1,4 +1,3 @@
-// src/services/mockJudicialService.ts
 
 export interface MockCNRDetails {
   cnrNumber: string;
@@ -19,9 +18,7 @@ export interface MockCNRDetails {
 }
 
 export class MockJudicialService {
-  /**
-   * 16-Digit CNR Verification Mock
-   */
+
   static async verifyCNR(cnrNumber: string): Promise<MockCNRDetails> {
     const isLucknow = cnrNumber.toUpperCase().includes("LKO") || cnrNumber.endsWith("2");
     const currentYear = new Date().getFullYear();
@@ -49,9 +46,6 @@ export class MockJudicialService {
     };
   }
 
-  /**
-   * Advance Notice Lookup by Diary / Notice Number Mock
-   */
   static async lookupNotice(noticeNumber: string) {
     return {
       noticeNumber,
@@ -59,16 +53,13 @@ export class MockJudicialService {
       leadPetitioner: "Sandeep Kumar & Ors.",
       advocateName: "P.K. Upadhyay (Advocate Roll: A/P0452/2012)",
       targetedDrive: "Constable Civil Police 2023-24",
-      defectStatus: "CLEARED", // Cleared by Stamp Reporter
+      defectStatus: "CLEARED",
       allocatedCaseType: "WRIT-A",
       allocatedCaseNo: "5024",
       allocatedYear: new Date().getFullYear(),
     };
   }
 
-  /**
-   * Daily Cause List Feed Mock
-   */
   static async getDailyCauseListFeed(bench: "Allahabad" | "Lucknow") {
     const today = new Date().toISOString().split("T")[0];
     return [

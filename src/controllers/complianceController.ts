@@ -1,266 +1,426 @@
 import { Request, Response } from "express";
-import crypto from "crypto";
-import { StayOrder, ContemptMatter, ComplianceArchive } from "../models/Compliance";
+import { ComplianceRecord } from "../models/ComplianceRisk";
 import { Case } from "../models/Case";
 import { AuthRequest } from "../middlewares/authMiddleware";
 
-// Helper: Calculate remaining calendar days
-const getRemainingDays = (targetDate: Date) => {
-  const diffTime = new Date(targetDate).getTime() - new Date().getTime();
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-};
+// ==========================================
+// 5.1 ACTIVE STAYS ROSTER
+// ==========================================
 
-// 40. GET /api/v1/compliance/stays
-export const getActiveStays = async (req: Request, res: Response) => {
+export const getActiveStaysRoster = async (req: Request, res: Response) => {
   try {
-    const stays = await StayOrder.find({ vacationStatus: { $ne: "VACATED" } }).sort({ stayVacationDueDate: 1 });
+    const stays = await ComplianceRecord.find({
+      recordType: "STAY",
+      status: "ACTIVE",
+    }).sort({ stayOrderDate: -1 }).lean();
 
-    const computedStays = stays.map((s) => {
-      const remaining = getRemainingDays(s.stayVacationDueDate);
+    const today = new Date();
+    let motionsDueCount = 0;
+    let filedCount = 0;
+    let totalStayDays = 0;
+
+    const data = stays.map((item) => {
+      const orderDate = item.stayOrderDate ? new Date(item.stayOrderDate) : today;
+      const stayDurationDays = Math.max(0, Math.floor((today.getTime() - orderDate.getTime()) / (1000 * 60 * 60 * 24)));
+      totalStayDays += stayDurationDays;
+
+      let daysRemainingForVacation = 999;
+      if (item.vacationDeadline) {
+        daysRemainingForVacation = Math.floor((new Date(item.vacationDeadline).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      }
+
+      if (item.vacationMotionStatus === "VACATION_FILED" || item.vacationMotionStatus === "LISTED FOR ARGUMENTS") {
+        filedCount++;
+      }
+      if (daysRemainingForVacation <= 7 && daysRemainingForVacation >= 0) {
+        motionsDueCount++;
+      }
+
       return {
-        ...s.toObject(),
-        daysRemaining: remaining,
-        isOverdue: remaining < 0,
+        _id: item._id,
+        caseId: item.caseId,
+        caseAndCnr: {
+          writNumber: item.writNumber,
+          cnrNumber: item.cnrNumber,
+          fileNo: item.fileNo,
+        },
+        courtAndCoram: {
+          court: item.court,
+          coram: item.coramBench,
+        },
+        stayOrderScope: item.stayOrderScope,
+        orderDateAndDuration: {
+          orderDate: item.stayOrderDate,
+          stayDurationDays,
+        },
+        vacationMotionStatus: item.vacationMotionStatus,
+        vacationDeadline: item.vacationDeadline,
+        oic: item.oicName,
       };
     });
 
-    res.status(200).json({
-      success: true,
-      count: computedStays.length,
-      data: computedStays,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+    const averageStayDuration = stays.length > 0 ? Math.round(totalStayDays / stays.length) : 0;
 
-// 41. GET /api/v1/compliance/stays/metrics
-export const getStayMetrics = async (req: Request, res: Response) => {
-  try {
-    const allActive = await StayOrder.find({ vacationStatus: { $ne: "VACATED" } });
-    const now = new Date();
-    const sevenDaysLater = new Date();
-    sevenDaysLater.setDate(now.getDate() + 7);
-
-    const urgentDue = allActive.filter((s) => new Date(s.stayVacationDueDate) <= sevenDaysLater).length;
-    const vacationsFiled = allActive.filter((s) => s.vacationStatus === "FILED_IN_COURT").length;
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       metrics: {
-        totalActiveStays: allActive.length,
-        dueWithin7Days: urgentDue,
-        vacationsFiled: vacationsFiled,
-        averageDurationDays: 45,
+        totalActiveStays: stays.length,
+        vacationMotionsDueUnder7Days: motionsDueCount,
+        vacationApplicationsFiled: filedCount,
+        averageStayDurationDays: averageStayDuration,
       },
+      data,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 42. POST /api/v1/compliance/stays/:stayId/vacation-motion
-export const fileStayVacationMotion = async (req: AuthRequest, res: Response) => {
+export const registerStayOrder = async (req: AuthRequest, res: Response) => {
   try {
-    const { stayId } = req.params;
-    const { assignedCounsel, notes } = req.body;
+    const {
+      caseId,
+      stayOrderScope,
+      stayOrderDate,
+      vacationDeadline,
+      vacationMotionStatus,
+      oicName,
+    } = req.body;
 
-    const stay = await StayOrder.findById(stayId);
-    if (!stay) return res.status(404).json({ success: false, message: "Stay record not found" });
+    const caseDoc = await Case.findById(caseId);
+    if (!caseDoc) {
+      return res.status(404).json({ success: false, message: "Case not found." });
+    }
 
-    stay.vacationStatus = "ASSIGNED_TO_COUNSEL";
-    stay.assignedCounsel = assignedCounsel || "Chief Standing Counsel";
-    stay.notes = notes || "Article 226(3) Vacation Application drafted and dispatched to state counsel";
-    await stay.save();
+    const orderDate = stayOrderDate ? new Date(stayOrderDate) : new Date();
+    // Default Rule: Art 226(3) Vacation Motion due within 14 days
+    const defaultDeadline = new Date(orderDate);
+    defaultDeadline.setDate(defaultDeadline.getDate() + 14);
 
-    res.status(200).json({
+    const record = await ComplianceRecord.create({
+      caseId: caseDoc._id,
+      fileNo: caseDoc.fileNo,
+      writNumber: caseDoc.writNumber,
+      cnrNumber: caseDoc.cnrNumber,
+      court: caseDoc.court,
+      coramBench: caseDoc.coramBench,
+      petitionerName: caseDoc.leadPetitioner,
+      oicName: oicName || caseDoc.assignedOIC,
+      recordType: "STAY",
+      stayOrderScope,
+      stayOrderDate: orderDate,
+      vacationDeadline: vacationDeadline ? new Date(vacationDeadline) : defaultDeadline,
+      vacationMotionStatus: vacationMotionStatus || "URGENT ACTION REQUIRED",
+      status: "ACTIVE",
+    });
+
+    // Sync Case model
+    caseDoc.hasActiveStay = true;
+    caseDoc.stayScope = stayOrderScope;
+    caseDoc.stayGrantedDate = orderDate;
+    caseDoc.stayVacationDueDate = record.vacationDeadline;
+    caseDoc.judicialStatus = "STAY_IN_FORCE";
+    await caseDoc.save();
+
+    return res.status(201).json({
       success: true,
-      message: `Vacation motion task dispatched to counsel: ${stay.assignedCounsel}`,
-      data: stay,
+      message: "Stay order registered in Active Stays Roster.",
+      data: record,
     });
   } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 43. GET /api/v1/compliance/stays/export-mis
-export const exportStaysMIS = async (req: Request, res: Response) => {
+export const updateVacationMotion = async (req: AuthRequest, res: Response) => {
   try {
-    const stays = await StayOrder.find().select("docketNo cnrNumber court caseNo stayGrantedDate stayVacationDueDate vacationStatus assignedCounsel");
-    res.status(200).json({
+    const { id } = req.params;
+    const { vacationMotionStatus, vacationFilingDate } = req.body;
+
+    const record = await ComplianceRecord.findById(id);
+    if (!record) return res.status(404).json({ success: false, message: "Record not found." });
+
+    if (vacationMotionStatus) record.vacationMotionStatus = vacationMotionStatus;
+    if (vacationFilingDate) record.vacationFilingDate = new Date(vacationFilingDate);
+    await record.save();
+
+    return res.status(200).json({
       success: true,
-      message: "Ready for download",
-      recordCount: stays.length,
-      data: stays,
+      message: "Vacation motion status updated.",
+      data: record,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 44. GET /api/v1/compliance/contempt
-export const getContemptRadar = async (req: Request, res: Response) => {
-  try {
-    const items = await ContemptMatter.find().sort({ statutoryDeadline: 1 });
+// ==========================================
+// 5.2 CONTEMPT RISK RADAR
+// ==========================================
 
-    const computedItems = items.map((c) => {
-      const remaining = getRemainingDays(c.statutoryDeadline);
-      let risk: "CRITICAL" | "HIGH" | "MEDIUM" = "MEDIUM";
-      if (remaining <= 3) risk = "CRITICAL";
-      else if (remaining <= 7) risk = "HIGH";
+export const getContemptRiskRadar = async (req: Request, res: Response) => {
+  try {
+    const records = await ComplianceRecord.find({
+      recordType: "CONTEMPT",
+      status: "ACTIVE",
+    }).sort({ complianceDeadlineDate: 1 }).lean();
+
+    const today = new Date();
+    let criticalCount = 0;
+    let highWarningCount = 0;
+    let monitoredCount = 0;
+
+    const data = records.map((item) => {
+      let daysRemaining = 0;
+      if (item.complianceDeadlineDate) {
+        daysRemaining = Math.max(0, Math.floor((new Date(item.complianceDeadlineDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+      }
+
+      let severity: "CRITICAL" | "HIGH_WARNING" | "MONITORED" = "MONITORED";
+      if (daysRemaining <= 3) {
+        severity = "CRITICAL";
+        criticalCount++;
+      } else if (daysRemaining <= 7) {
+        severity = "HIGH_WARNING";
+        highWarningCount++;
+      } else {
+        monitoredCount++;
+      }
 
       return {
-        ...c.toObject(),
-        daysRemaining: remaining,
-        riskLevel: risk,
+        _id: item._id,
+        caseId: item.caseId,
+        severity,
+        contemptCaseAndWrit: {
+          contemptNumber: item.contemptNumber || "CONTEMPT / PENDING",
+          originalWrit: item.writNumber,
+          court: item.court,
+        },
+        petitionerAndContemnor: {
+          petitioner: item.petitionerName,
+          contemnor: item.contemnorTitle,
+        },
+        courtDirections: item.courtDirections,
+        countdown: {
+          daysRemaining,
+          totalDays: item.totalComplianceDays || 42,
+        },
+        complianceProgress: item.complianceProgress,
+        oic: item.oicName,
       };
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      count: computedItems.length,
-      criticalCount: computedItems.filter((i) => i.riskLevel === "CRITICAL").length,
-      data: computedItems,
+      summary: {
+        totalShowCauseMatters: records.length,
+        level3CriticalUnder3Days: criticalCount,
+        level2HighWarningUnder7Days: highWarningCount,
+        level1MonitoredUnder14Days: monitoredCount,
+      },
+      data,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 45. POST /api/v1/compliance/contempt/trigger-red-alerts
-export const triggerContemptRedAlerts = async (req: AuthRequest, res: Response) => {
+export const registerContemptNotice = async (req: AuthRequest, res: Response) => {
   try {
-    const now = new Date();
-    const threeDaysLater = new Date();
-    threeDaysLater.setDate(now.getDate() + 3);
+    const {
+      caseId,
+      contemptNumber,
+      contemnorTitle,
+      courtDirections,
+      complianceDeadlineDate,
+      totalComplianceDays = 42,
+      complianceProgress,
+      oicName,
+    } = req.body;
 
-    const urgentMatters = await ContemptMatter.find({
-      statutoryDeadline: { $lte: threeDaysLater },
-      processingStatus: { $ne: "COMPLIANCE_AFFIDAVIT_FILED" },
+    const caseDoc = await Case.findById(caseId);
+    if (!caseDoc) {
+      return res.status(404).json({ success: false, message: "Case not found." });
+    }
+
+    const deadline = complianceDeadlineDate ? new Date(complianceDeadlineDate) : new Date(Date.now() + totalComplianceDays * 24 * 60 * 60 * 1000);
+    const today = new Date();
+    const daysLeft = Math.floor((deadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    let severity: "CRITICAL" | "HIGH_WARNING" | "MONITORED" = "MONITORED";
+    if (daysLeft <= 3) severity = "CRITICAL";
+    else if (daysLeft <= 7) severity = "HIGH_WARNING";
+
+    const record = await ComplianceRecord.create({
+      caseId: caseDoc._id,
+      fileNo: caseDoc.fileNo,
+      writNumber: caseDoc.writNumber,
+      cnrNumber: caseDoc.cnrNumber,
+      court: caseDoc.court,
+      coramBench: caseDoc.coramBench,
+      petitionerName: caseDoc.leadPetitioner,
+      oicName: oicName || caseDoc.assignedOIC,
+      recordType: "CONTEMPT",
+      contemptNumber,
+      contemnorTitle: contemnorTitle || "Chairman UPPRPB",
+      courtDirections,
+      directionGivenDate: new Date(),
+      complianceDeadlineDate: deadline,
+      totalComplianceDays,
+      complianceProgress: complianceProgress || "Compliance Note in Preparation",
+      severityLevel: severity,
+      status: "ACTIVE",
     });
 
-    await ContemptMatter.updateMany(
-      { _id: { $in: urgentMatters.map((u) => u._id) } },
-      { lastAlertDispatchedAt: new Date() }
-    );
+    // Sync Case
+    caseDoc.isContemptNotice = true;
+    caseDoc.contemptDeadlineDate = deadline;
+    caseDoc.judicialStatus = "CONTEMPT_NOTICE";
+    await caseDoc.save();
 
-    res.status(200).json({
+    return res.status(201).json({
       success: true,
-      message: `Emergency Flash Alert pushed for ${urgentMatters.length} critical contempt notices`,
-      targetedNotices: urgentMatters.map((m) => ({
-        contemptCaseNo: m.contemptCaseNo,
-        respondent: m.respondentNamed,
-        deadline: m.statutoryDeadline,
+      message: "Contempt show cause notice docked into Contempt Risk Radar.",
+      data: record,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const triggerRedZoneAlerts = async (req: AuthRequest, res: Response) => {
+  try {
+    const criticalCases = await ComplianceRecord.find({
+      recordType: "CONTEMPT",
+      status: "ACTIVE",
+    }).lean();
+
+    const today = new Date();
+    const alertList = criticalCases.filter((c) => {
+      if (!c.complianceDeadlineDate) return false;
+      const diff = Math.floor((new Date(c.complianceDeadlineDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diff <= 3;
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Triggered SMS/Email Escalation for ${alertList.length} Red-Zone Contempt notices.`,
+      dispatchedCount: alertList.length,
+      escalatedCases: alertList.map((a) => ({
+        contemptNumber: a.contemptNumber,
+        petitioner: a.petitionerName,
+        contemnor: a.contemnorTitle,
+        deadline: a.complianceDeadlineDate,
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// 46. PUT /api/v1/compliance/contempt/:id/status
-export const updateContemptStatus = async (req: AuthRequest, res: Response) => {
+// ==========================================
+// 5.3 COMPLIANCE FILING & ARCHIVAL
+// ==========================================
+
+export const getArchivedComplianceRecords = async (req: Request, res: Response) => {
   try {
-    const { status, personalAppearanceExempted } = req.body;
-    const matter = await ContemptMatter.findById(req.params.id);
-    if (!matter) return res.status(404).json({ success: false, message: "Contempt matter not found" });
+    const archives = await ComplianceRecord.find({
+      status: "COMPLIED_AND_CLOSED",
+    }).sort({ closedAt: -1 }).lean();
 
-    if (status) matter.processingStatus = status;
-    if (personalAppearanceExempted !== undefined) matter.personalAppearanceExempted = personalAppearanceExempted;
-    await matter.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Contempt proceeding stage updated successfully",
-      data: matter,
-    });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-};
-
-// 47. GET /api/v1/compliance/archived
-export const getArchivedCases = async (req: Request, res: Response) => {
-  try {
-    const archives = await ComplianceArchive.find().sort({ disposalDate: -1 });
-    res.status(200).json({
-      success: true,
-      totalArchived: archives.length,
-      data: archives,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// 48. POST /api/v1/compliance/archive-case
-export const archiveCaseWithProof = async (req: AuthRequest, res: Response) => {
-  try {
-    const { caseId, disposalNature, complianceAffidavitFilingDate, sealedAffidavitUrl, remarks } = req.body;
-
-    const caseItem = await Case.findById(caseId);
-    if (!caseItem) return res.status(404).json({ success: false, message: "Case not found" });
-
-    const sealHash = crypto
-      .createHash("sha256")
-      .update(caseItem._id.toString() + complianceAffidavitFilingDate + Date.now())
-      .digest("hex");
-
-    const archivedRecord = await ComplianceArchive.create({
-      caseId: caseItem._id,
-      docketNo: caseItem.fileDocketNo,
-      cnrNumber: caseItem.cnrNumber,
-      caseNo: `${caseItem.caseType}/${caseItem.caseNumber}/${caseItem.caseYear}`,
-      court: caseItem.court,
-      parties: `${caseItem.leadPetitioner} vs. ${caseItem.respondentString}`,
-      disposalDate: new Date(),
-      disposalNature: disposalNature || "Allowed with Directions (Complied in Full)",
-      complianceAffidavitFilingDate: new Date(complianceAffidavitFilingDate || Date.now()),
-      sealedAffidavitUrl: sealedAffidavitUrl || "",
-      sha256Seal: sealHash,
-      closedByOfficer: req.user?.username || "Legal Officer",
-      remarks: remarks || "Sealed compliance affidavit verified. Case marked permanently closed.",
-    });
-
-    // Update case status to ARCHIVED
-    caseItem.judicialStatus = "ARCHIVED";
-    caseItem.stage = "Closed & Consigned to Record Room";
-    await caseItem.save();
-
-    // Clean up active stay or contempt rows if any
-    await StayOrder.deleteMany({ caseId: caseItem._id });
-    await ContemptMatter.deleteMany({ caseId: caseItem._id });
-
-    res.status(201).json({
-      success: true,
-      message: `Case ${caseItem.fileDocketNo} permanently archived`,
-      data: archivedRecord,
-    });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-};
-
-// 49. GET /api/v1/compliance/proof/:id
-export const getComplianceProof = async (req: Request, res: Response) => {
-  try {
-    const proof = await ComplianceArchive.findById(req.params.id);
-    if (!proof) return res.status(404).json({ success: false, message: "Compliance proof record not found" });
-
-    res.status(200).json({
-      success: true,
-      proofDetails: {
-        docketNo: proof.docketNo,
-        cnrNumber: proof.cnrNumber,
-        caseNo: proof.caseNo,
-        disposalNature: proof.disposalNature,
-        affidavitFilingDate: proof.complianceAffidavitFilingDate,
-        sha256CryptographicSeal: proof.sha256Seal,
-        closedBy: proof.closedByOfficer,
-        documentViewUrl: proof.sealedAffidavitUrl || null,
+    const data = archives.map((item) => ({
+      _id: item._id,
+      caseId: item.caseId,
+      caseNoAndCnr: {
+        writNumber: item.writNumber,
+        cnrNumber: item.cnrNumber,
       },
+      petitionerAndCourt: {
+        petitioner: item.petitionerName,
+        court: item.court,
+      },
+      judicialDirectionGiven: item.courtDirections || item.stayOrderScope || "Relief considered on merit",
+      actionTakenByBoard: item.actionTakenByBoard,
+      complianceAffidavitFiled: {
+        date: item.complianceAffidavitDate || item.closedAt,
+        proofDocUrl: item.complianceProofDocUrl || "#",
+      },
+      closedByAndDate: {
+        closedBy: item.closedByOfficerName || "SP Legal",
+        closedAt: item.closedAt,
+      },
+      status: "COMPLIED & CLOSED",
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: archives.length,
+      data,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const closeAndArchiveCase = async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      caseId,
+      actionTakenByBoard,
+      complianceAffidavitDate,
+      complianceProofDocUrl,
+      complianceProofDocId,
+    } = req.body;
+
+    const caseDoc = await Case.findById(caseId);
+    if (!caseDoc) {
+      return res.status(404).json({ success: false, message: "Case not found." });
+    }
+
+    if (!actionTakenByBoard) {
+      return res.status(400).json({
+        success: false,
+        message: "Action taken description by Board is required for permanent closeout.",
+      });
+    }
+
+    // Update or create compliance archival record
+    let record = await ComplianceRecord.findOne({ caseId: caseDoc._id });
+    if (!record) {
+      record = new ComplianceRecord({
+        caseId: caseDoc._id,
+        fileNo: caseDoc.fileNo,
+        writNumber: caseDoc.writNumber,
+        cnrNumber: caseDoc.cnrNumber,
+        court: caseDoc.court,
+        petitionerName: caseDoc.leadPetitioner,
+        recordType: "GENERAL_DIRECTION",
+      });
+    }
+
+    const closeTime = new Date();
+    record.status = "COMPLIED_AND_CLOSED";
+    record.actionTakenByBoard = actionTakenByBoard;
+    record.complianceAffidavitDate = complianceAffidavitDate ? new Date(complianceAffidavitDate) : closeTime;
+    record.complianceProofDocUrl = complianceProofDocUrl || "";
+    record.complianceProofDocId = complianceProofDocId || undefined;
+    record.closedByOfficerName = req.user?.name || req.user?.username || "SP Legal";
+    record.closedAt = closeTime;
+    await record.save();
+
+    // Mark Case file permanently archived
+    caseDoc.judicialStatus = "DISPOSED";
+    caseDoc.stage = "Case Complied & Archived";
+    caseDoc.hasActiveStay = false;
+    caseDoc.isContemptNotice = false;
+    await caseDoc.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Case ${caseDoc.fileNo} officially closed, complied, and archived.`,
+      data: record,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
