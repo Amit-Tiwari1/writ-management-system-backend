@@ -83,9 +83,7 @@ export const baseEmailLayout = ({
   `;
 };
 
-/**
- * Template: New User Credentials & Welcome Dispatch
- */
+
 export const userWelcomeCredentialsTemplate = (payload: {
   officerName: string;
   username: string;
@@ -310,5 +308,38 @@ export const caseAssignedTemplate = (payload: {
     bodyContentHtml: body,
     actionButtonText: "View 360° Dossier",
     actionButtonUrl: `${PORTAL_URL}/cases/${payload.caseId}`,
+  });
+};
+
+export const passwordResetOtpTemplate = (payload: {
+  officerName: string;
+  otp: string;
+  validMinutes: number;
+}) => {
+  const body = `
+    <p>A request was received to reset your official password for the <strong>UPPRPB Legal Case Management System (WCMS)</strong>.</p>
+    
+    <div style="text-align: center; margin: 24px 0;">
+      <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f2744; background: #e2e8f0; padding: 12px 24px; border-radius: 8px; font-family: monospace; display: inline-block;">
+        ${payload.otp}
+      </span>
+      <p style="font-size: 12px; color: #64748b; margin-top: 8px;">
+        Valid for ${payload.validMinutes} minutes. Do not share this OTP with anyone.
+      </p>
+    </div>
+
+    <p style="font-size: 12px; color: #dc2626;">
+      If you did not initiate this request, please inform the Legal Cell Administration immediately.
+    </p>
+  `;
+
+  return baseEmailLayout({
+    title: "Password Reset Verification Code",
+    badgeText: "Security Verification",
+    badgeBgColor: "#d97706",
+    recipientName: payload.officerName,
+    bodyContentHtml: body,
+    actionButtonText: "Return to Legal Portal",
+    actionButtonUrl: `${process.env.APP_PORTAL_URL || "http://localhost:3000"}/login`,
   });
 };
