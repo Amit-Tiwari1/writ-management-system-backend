@@ -15,6 +15,7 @@ import complianceRoutes from "./routes/complianceRoutes";
 import dashboardRoutes from "./routes/dashboardRoutes";
 import adminRoutes from "./routes/adminRoutes";
 import reportRoutes from "./routes/reportRoutes";
+import notificationRoutes from "./routes/notificationRoutes";
 import { seedMastersIfEmpty } from "./config/seedMaster";
 dotenv.config();
 
@@ -34,7 +35,8 @@ app.use("/api/v1", notingRoutes);
 app.use("/api/v1", complianceRoutes);           
 app.use("/api/v1", dashboardRoutes);  
 app.use("/api/v1", adminRoutes);
-app.use("/api/v1", reportRoutes);                
+app.use("/api/v1", reportRoutes);  
+app.use("/api/v1", notificationRoutes);              
 
 app.get("/api/v1/health", (req: Request, res: Response) => {
   res.status(200).json({

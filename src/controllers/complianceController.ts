@@ -2,10 +2,8 @@ import { Request, Response } from "express";
 import { ComplianceRecord } from "../models/ComplianceRisk";
 import { Case } from "../models/Case";
 import { AuthRequest } from "../middlewares/authMiddleware";
-
-// ==========================================
-// 5.1 ACTIVE STAYS ROSTER
-// ==========================================
+import { NotificationService } from "../services/notificationService";
+import { User } from "../models/User";
 
 export const getActiveStaysRoster = async (req: Request, res: Response) => {
   try {
@@ -87,7 +85,9 @@ export const registerStayOrder = async (req: AuthRequest, res: Response) => {
       oicName,
     } = req.body;
 
-    const caseDoc = await Case.findById(caseId);
+    const targetCaseId = String(caseId);
+
+    const caseDoc = await Case.findById(targetCaseId);
     if (!caseDoc) {
       return res.status(404).json({ success: false, message: "Case not found." });
     }
@@ -114,7 +114,6 @@ export const registerStayOrder = async (req: AuthRequest, res: Response) => {
       status: "ACTIVE",
     });
 
-    // Sync Case model
     caseDoc.hasActiveStay = true;
     caseDoc.stayScope = stayOrderScope;
     caseDoc.stayGrantedDate = orderDate;
@@ -122,10 +121,89 @@ export const registerStayOrder = async (req: AuthRequest, res: Response) => {
     caseDoc.judicialStatus = "STAY_IN_FORCE";
     await caseDoc.save();
 
+    const targetUserId = caseDoc.internalHold?.currentHolderId || req.user?.id;
+    if (targetUserId) {
+      NotificationService.sendNotification({
+        recipientId: targetUserId,
+        caseId: caseDoc._id,
+        fileNo: caseDoc.fileNo,
+        type: "STAY_ALERT",
+        title: `Interim Stay Granted in ${caseDoc.writNumber}`,
+        message: `High Court granted interim stay: ${stayOrderScope}. Article 226(3) vacation application deadline is initiated.`,
+        isUrgent: true,
+        senderName: req.user?.name || "Judicial Registry Desk",
+        senderDesignation: "Compliance Cell",
+        extraMeta: {
+          writNo: caseDoc.writNumber,
+          stayScope: stayOrderScope,
+          vacationDeadline: record.vacationDeadline ? record.vacationDeadline.toLocaleDateString("en-GB") : "14 Days",
+        },
+      }).catch((err) => console.error("[Stay Notification Error]:", err.message));
+    }
+
     return res.status(201).json({
       success: true,
       message: "Stay order registered in Active Stays Roster.",
       data: record,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const triggerRedZoneAlerts = async (req: AuthRequest, res: Response) => {
+  try {
+    const criticalCases = await ComplianceRecord.find({
+      recordType: "CONTEMPT",
+      status: "ACTIVE",
+    }).lean();
+
+    const today = new Date();
+    const alertList = criticalCases.filter((c) => {
+      if (!c.complianceDeadlineDate) return false;
+      const diff = Math.floor((new Date(c.complianceDeadlineDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diff <= 3;
+    });
+
+    // Notification Trigger: Dispatch In-App + Email Alert for each critical contempt
+    for (const item of alertList) {
+      if (item.caseId) {
+        // Send alert to current logged-in authority and OIC
+        const recipientUser = await User.findOne({ name: new RegExp(item.oicName.trim(), "i") });
+        const targetId = recipientUser?._id || req.user?.id;
+
+        if (targetId) {
+          NotificationService.sendNotification({
+            recipientId: targetId,
+            caseId: item.caseId,
+            fileNo: item.fileNo,
+            type: "CONTEMPT_NOTICE",
+            title: `CRITICAL CONTEMPT: ${item.contemptNumber}`,
+            message: `Less than 3 days left before judicial compliance expiry for ${item.petitionerName} (${item.contemptNumber}).`,
+            isUrgent: true,
+            senderName: req.user?.name || "Contempt Risk Engine",
+            senderDesignation: "Automated Escalation Daemon",
+            extraMeta: {
+              contemptNo: item.contemptNumber,
+              court: item.court,
+              daysRemaining: 2,
+              complianceDeadline: item.complianceDeadlineDate ? new Date(item.complianceDeadlineDate).toLocaleDateString("en-GB") : "Immediate",
+            },
+          }).catch((err) => console.error("[Contempt RedZone Notification Error]:", err.message));
+        }
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Triggered SMS/Email Escalation for ${alertList.length} Red-Zone Contempt notices.`,
+      dispatchedCount: alertList.length,
+      escalatedCases: alertList.map((a) => ({
+        contemptNumber: a.contemptNumber,
+        petitioner: a.petitionerName,
+        contemnor: a.contemnorTitle,
+        deadline: a.complianceDeadlineDate,
+      })),
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });
@@ -154,9 +232,6 @@ export const updateVacationMotion = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// ==========================================
-// 5.2 CONTEMPT RISK RADAR
-// ==========================================
 
 export const getContemptRiskRadar = async (req: Request, res: Response) => {
   try {
@@ -287,40 +362,6 @@ export const registerContemptNotice = async (req: AuthRequest, res: Response) =>
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
-export const triggerRedZoneAlerts = async (req: AuthRequest, res: Response) => {
-  try {
-    const criticalCases = await ComplianceRecord.find({
-      recordType: "CONTEMPT",
-      status: "ACTIVE",
-    }).lean();
-
-    const today = new Date();
-    const alertList = criticalCases.filter((c) => {
-      if (!c.complianceDeadlineDate) return false;
-      const diff = Math.floor((new Date(c.complianceDeadlineDate).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      return diff <= 3;
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: `Triggered SMS/Email Escalation for ${alertList.length} Red-Zone Contempt notices.`,
-      dispatchedCount: alertList.length,
-      escalatedCases: alertList.map((a) => ({
-        contemptNumber: a.contemptNumber,
-        petitioner: a.petitionerName,
-        contemnor: a.contemnorTitle,
-        deadline: a.complianceDeadlineDate,
-      })),
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// ==========================================
-// 5.3 COMPLIANCE FILING & ARCHIVAL
-// ==========================================
 
 export const getArchivedComplianceRecords = async (req: Request, res: Response) => {
   try {

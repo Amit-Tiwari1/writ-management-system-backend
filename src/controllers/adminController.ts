@@ -8,10 +8,8 @@ import { Rank, Designation, Department } from "../models/Masters";
 import { AuditLog } from "../models/AuditLog";
 import { Case } from "../models/Case";
 import { logAuditEvent } from "../utils/auditLogger";
+import { NotificationService } from "../services/notificationService";
 
-// ==========================================
-// DROPDOWNS BUNDLE FOR CREATING USER
-// ==========================================
 
 export const getUserFormDropdowns = async (req: Request, res: Response) => {
   try {
@@ -36,10 +34,6 @@ export const getUserFormDropdowns = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
-// ==========================================
-// 7.1 OFFICERS & USERS DIRECTORY
-// ==========================================
 
 export const getUsersList = async (req: Request, res: Response) => {
   try {
@@ -124,6 +118,19 @@ export const createStaffUser = async (req: Request, res: Response) => {
       courtBench: courtBench || "BOTH",
       status: "ACTIVE",
     });
+    if (email && email.includes("@")) {
+      console.log(`[Admin] Triggering welcome email to: ${email}`);
+      NotificationService.sendWelcomeCredentialsEmail({
+        toEmail: email.trim(),
+        officerName: user.name,
+        username: user.username,
+        rawPassword: password,
+        designation: user.designation,
+        section: user.section,
+        roleName: roleDoc.roleName,
+      }).catch((err) => console.error("[User Welcome Mail Error]:", err));
+    }
+    console.log(`[Admin] Staff user created: ${user.username} (${user.role})`);
 
     await logAuditEvent(
       req,
@@ -192,9 +199,6 @@ export const updateStaffUser = async (req: Request, res: Response) => {
   }
 };
 
-// ==========================================
-// 7.2 DYNAMIC RBAC ROLES & PERMISSION MATRIX
-// ==========================================
 
 export const getRolesWithMetrics = async (req: Request, res: Response) => {
   try {
@@ -370,9 +374,6 @@ export const updateRolePermissionMatrix = async (req: Request, res: Response) =>
   }
 };
 
-// ==========================================
-// 7.3 SECURITY AUDIT TRAIL
-// ==========================================
 
 export const getAuditLogs = async (req: Request, res: Response) => {
   try {
@@ -422,9 +423,6 @@ export const getAuditLogs = async (req: Request, res: Response) => {
   }
 };
 
-// ==========================================
-// 7.4 eCOURTS & NAPIX SYNC DIAGNOSTICS
-// ==========================================
 
 export const getECourtsSyncHealth = async (req: Request, res: Response) => {
   try {

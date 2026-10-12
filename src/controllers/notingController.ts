@@ -5,6 +5,7 @@ import { Case } from "../models/Case";
 import { User } from "../models/User";
 import { Notification } from "../models/Notification";
 import { AuthRequest } from "../middlewares/authMiddleware";
+import { NotificationService } from "../services/notificationService";
 
 export const getForwardableOfficers = async (
   req: AuthRequest,
@@ -66,7 +67,13 @@ export const getCaseNotings = async (req: Request, res: Response) => {
 
 export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
   try {
-    const { caseId } = req.params;
+    const targetCaseId = String(req.params.caseId);
+    const currentUserId = req.user?.id ? String(req.user.id) : null;
+
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Unauthorized: User session missing." });
+    }
+
     const {
       content,
       minuteTitle,
@@ -83,7 +90,7 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
         .json({ success: false, message: "Noting text cannot be empty." });
     }
 
-    const caseItem = await Case.findById(caseId);
+    const caseItem = await Case.findById(targetCaseId);
     if (!caseItem) {
       return res
         .status(404)
@@ -93,7 +100,7 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
     let targetOfficerName = "";
     let targetOfficerDesignation = "";
     if (forwardToUserId) {
-      const targetUser = await User.findById(forwardToUserId);
+      const targetUser = await User.findById(String(forwardToUserId));
       if (targetUser) {
         targetOfficerName = targetUser.name;
         targetOfficerDesignation = targetUser.designation;
@@ -101,8 +108,8 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
     }
 
     let draft = await NotingMinute.findOne({
-      caseId,
-      authorId: req.user?.id,
+      caseId: targetCaseId,
+      authorId: currentUserId,
       status: "DRAFT",
     });
 
@@ -120,13 +127,13 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
       if (fileUrgency) draft.fileUrgency = fileUrgency;
       await draft.save();
     } else {
-      const highest = await NotingMinute.findOne({ caseId }).sort({
+      const highest = await NotingMinute.findOne({ caseId: targetCaseId }).sort({
         minuteNumber: -1,
       });
       const nextMinuteNo = highest ? highest.minuteNumber + 1 : 1;
 
       draft = await NotingMinute.create({
-        caseId,
+        caseId: targetCaseId,
         minuteNumber: nextMinuteNo,
         minuteTitle:
           minuteTitle ||
@@ -134,7 +141,7 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
         notingPurpose: notingPurpose || "PWC / Legal Opinion",
         fontEncoding: fontEncoding || "Unicode",
         content,
-        authorId: req.user?.id,
+        authorId: currentUserId,
         authorName: req.user?.name || req.user?.username || "Legal Officer",
         authorDesignation: req.user?.designation || "Dealing Assistant",
         forwardToUserId: forwardToUserId || undefined,
@@ -160,8 +167,8 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
 
 export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
   try {
-    const { caseId } = req.params;
     const {
+      caseId: bodyCaseId,
       minuteId,
       content,
       minuteTitle,
@@ -172,7 +179,13 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
       fileUrgency,
     } = req.body;
 
-    const caseItem = await Case.findById(caseId);
+    const targetCaseId = String(req.params.caseId || bodyCaseId || "").trim();
+
+    if (!targetCaseId || targetCaseId === "undefined") {
+      return res.status(400).json({ success: false, message: "Invalid Case ID provided." });
+    }
+
+    const caseItem = await Case.findById(targetCaseId);
     if (!caseItem) {
       return res
         .status(404)
@@ -209,20 +222,20 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
       minute = await NotingMinute.findById(minuteId);
     } else {
       minute = await NotingMinute.findOne({
-        caseId,
+        caseId: targetCaseId,
         authorId: req.user?.id,
         status: "DRAFT",
       });
     }
 
     if (!minute) {
-      const highest = await NotingMinute.findOne({ caseId }).sort({
+      const highest = await NotingMinute.findOne({ caseId: targetCaseId }).sort({
         minuteNumber: -1,
       });
       const nextMinuteNo = highest ? highest.minuteNumber + 1 : 1;
 
       minute = new NotingMinute({
-        caseId,
+        caseId: targetCaseId,
         minuteNumber: nextMinuteNo,
         authorId: req.user?.id,
         authorName: req.user?.name || req.user?.username || "Legal Officer",
@@ -240,7 +253,7 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
     if (fileUrgency) minute.fileUrgency = fileUrgency;
 
     const signTimestamp = new Date();
-    const sealData = `${minute.caseId}_${minute.minuteNumber}_${minute.content}_${req.user?.id}_${signTimestamp.toISOString()}`;
+    const sealData = `${targetCaseId}_${minute.minuteNumber}_${minute.content}_${req.user?.id}_${signTimestamp.toISOString()}`;
     const sha256Seal = crypto
       .createHash("sha256")
       .update(sealData)
@@ -278,18 +291,21 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
     };
     await caseItem.save();
 
-    // Generate Targeted Notification for Officer
-    await Notification.create({
+    // Notification Trigger: In-App Record + Branded Resend Email Dispatch
+    NotificationService.sendNotification({
       recipientId: recipientUser._id,
       caseId: caseItem._id,
       fileNo: caseItem.fileNo,
       type: "FILE_FORWARDED",
       title: `Dak Received: ${caseItem.fileNo}`,
-      message: `File has been forwarded to your desk by ${minute.signature.signerName} (${minute.signature.signerDesignation}) for ${minute.notingPurpose}.`,
+      message: `File has been digitally forwarded to your desk by ${minute.signature.signerName} (${minute.signature.signerDesignation}) for ${minute.notingPurpose}.`,
       isUrgent: minute.fileUrgency === "High Priority (NDOH)",
       senderName: minute.signature.signerName,
       senderDesignation: minute.signature.signerDesignation,
-    });
+      extraMeta: {
+        notingPurpose: minute.notingPurpose,
+      },
+    }).catch((err) => console.error("[Dak Notification Error]:", err.message));
 
     return res.status(200).json({
       success: true,

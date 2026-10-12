@@ -7,6 +7,8 @@ import { CaseService } from "../services/caseService";
 import { MockJudicialService } from "../services/mockJudicialService";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import { logAuditEvent } from "../utils/auditLogger";
+import { NotificationService } from "../services/notificationService";
+import { User } from "../models/User";
 
 export const getCasesRegister = async (req: Request, res: Response) => {
   try {
@@ -249,6 +251,33 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
         district: p.district || "--",
       }));
       await Petitioner.insertMany(petDocs);
+    }
+
+    // Notification Trigger: Designated OIC ko intimation aur email
+    if (newCase.assignedOIC && newCase.assignedOIC !== "Unassigned (OIC)") {
+      const oicUser = await User.findOne({
+        name: new RegExp(newCase.assignedOIC.trim(), "i"),
+      });
+
+      if (oicUser) {
+        NotificationService.sendNotification({
+          recipientId: oicUser._id,
+          caseId: newCase._id,
+          fileNo: newCase.fileNo,
+          type: "HEARING_REMINDER",
+          title: `New Case Assigned: ${newCase.fileNo}`,
+          message: `A fresh case docket ${newCase.writNumber || newCase.noticeNumber} (${newCase.leadPetitioner}) has been designated to your desk as OIC.`,
+          isUrgent: newCase.hasActiveStay || newCase.isContemptNotice,
+          senderName: req.user?.name || req.user?.username || "Registry Officer",
+          senderDesignation: req.user?.designation || "Case Intake Desk",
+          extraMeta: {
+            writOrNotice: newCase.writNumber || newCase.noticeNumber,
+            court: newCase.court,
+            petitioner: newCase.leadPetitioner,
+            roleAssigned: "Officer-in-Charge (OIC)",
+          },
+        }).catch((err) => console.error("[OIC Intake Notification Error]:", err.message));
+      }
     }
 
     await logAuditEvent(
