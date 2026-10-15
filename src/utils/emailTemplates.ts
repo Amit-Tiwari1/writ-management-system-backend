@@ -1,4 +1,3 @@
-// backend/src/utils/emailTemplates.ts
 
 const LOGO_URL =
   process.env.UPPRPB_LOGO_URL || "https://uppbpb.gov.in/Content/images/LOGO.bmp";

@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import { Case, Discovery } from "../models/Case";
 
-// 17. GET /api/v1/cases/:caseId/petitioners
 export const getPetitioners = async (req: Request, res: Response) => {
   try {
     const caseItem = await Case.findById(req.params.caseId);
@@ -12,7 +11,6 @@ export const getPetitioners = async (req: Request, res: Response) => {
   }
 };
 
-// 18. POST /api/v1/cases/:caseId/petitioners
 export const addPetitioner = async (req: Request, res: Response) => {
   try {
     const caseItem = await Case.findById(req.params.caseId);
@@ -27,7 +25,6 @@ export const addPetitioner = async (req: Request, res: Response) => {
   }
 };
 
-// 19. PUT /api/v1/cases/:caseId/petitioners/:petitionerId
 export const updatePetitioner = async (req: Request, res: Response) => {
   try {
     const caseItem = await Case.findById(req.params.caseId);
@@ -45,7 +42,6 @@ export const updatePetitioner = async (req: Request, res: Response) => {
   }
 };
 
-// 20. DELETE /api/v1/cases/:caseId/petitioners/:petitionerId
 export const deletePetitioner = async (req: Request, res: Response) => {
   try {
     const caseItem = await Case.findById(req.params.caseId);
@@ -60,7 +56,6 @@ export const deletePetitioner = async (req: Request, res: Response) => {
   }
 };
 
-// 21. POST /api/v1/cases/:caseId/petitioners/bulk-upload
 export const bulkUploadPetitioners = async (req: Request, res: Response) => {
   try {
     const { petitioners } = req.body;
@@ -84,7 +79,6 @@ export const bulkUploadPetitioners = async (req: Request, res: Response) => {
   }
 };
 
-// 22. GET /api/v1/discovery/unclaimed
 export const getUnclaimedDiscovery = async (req: Request, res: Response) => {
   try {
     const items = await Discovery.find({ status: "UNCLAIMED" }).sort({ matchScore: -1 });
@@ -94,7 +88,6 @@ export const getUnclaimedDiscovery = async (req: Request, res: Response) => {
   }
 };
 
-// 23. POST /api/v1/discovery/:id/accept
 export const acceptDiscoveryItem = async (req: Request, res: Response) => {
   try {
     const item = await Discovery.findById(req.params.id);
@@ -109,7 +102,6 @@ export const acceptDiscoveryItem = async (req: Request, res: Response) => {
   }
 };
 
-// 24. POST /api/v1/discovery/:id/ignore
 export const ignoreDiscoveryItem = async (req: Request, res: Response) => {
   try {
     const item = await Discovery.findById(req.params.id);
@@ -124,10 +116,8 @@ export const ignoreDiscoveryItem = async (req: Request, res: Response) => {
   }
 };
 
-// 25. POST /api/v1/discovery/trigger-scraper
 export const triggerCauseListScraper = async (req: Request, res: Response) => {
   try {
-    // Simulates BullMQ Cause-list crawler task
     res.status(200).json({
       success: true,
       message: "Daily cause list scanner dispatched for Allahabad & Lucknow Benches",
@@ -138,7 +128,6 @@ export const triggerCauseListScraper = async (req: Request, res: Response) => {
   }
 };
 
-// 26. POST /api/v1/discovery/upload-pdf-causelist
 export const uploadPdfCauseList = async (req: Request, res: Response) => {
   try {
     res.status(200).json({

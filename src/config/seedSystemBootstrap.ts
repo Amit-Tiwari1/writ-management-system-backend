@@ -7,7 +7,6 @@ import { RolePermission } from "../models/RolePermission";
 
 export const seedSystemBootstrap = async () => {
   try {
-    // 1. Seed Menus & Submenus if not present
     let menus = await Menu.find();
     if (menus.length === 0) {
       menus = await Menu.insertMany([
@@ -120,7 +119,6 @@ export const seedSystemBootstrap = async () => {
       console.log("🌱 [Bootstrap] Menus & Submenus configured in database.");
     }
 
-    // 2. Seed Super Admin Role
     let superAdminRole = await Role.findOne({ roleCode: "SUPER_ADMIN" });
     if (!superAdminRole) {
       superAdminRole = await Role.create({
@@ -130,7 +128,6 @@ export const seedSystemBootstrap = async () => {
         isSystemDefault: true,
       });
 
-      // Grant Full Privileges across all menus to Super Admin
       const permissionsData = menus.map((m) => ({
         roleId: superAdminRole!._id,
         menuId: m._id,
@@ -148,7 +145,6 @@ export const seedSystemBootstrap = async () => {
       console.log("🌱 [Bootstrap] Super Admin role with full 7-action permission matrix created.");
     }
 
-    // 3. Seed Root Admin User
     const existingAdmin = await User.findOne({ username: "admin" });
     if (!existingAdmin) {
       const salt = await bcrypt.genSalt(10);
@@ -159,7 +155,7 @@ export const seedSystemBootstrap = async () => {
         username: "admin",
         passwordHash: hash,
         designation: "Super Administrator / Chairman",
-        section: "Apex Secretariat",
+        section: "Secretariat",
         mobile: "9454400100",
         email: "admin@legalboard.in",
         roleId: superAdminRole._id,
@@ -171,12 +167,11 @@ export const seedSystemBootstrap = async () => {
       console.log("🌱 [Bootstrap] Root Admin user created: username: 'admin' | pass: '1234'");
     }
 
-    // 4. Baseline Jurisdictional Masters (Courts & Base Districts Only)
     if ((await Court.countDocuments()) === 0) {
       await Court.insertMany([
         { courtName: "High Court of Judicature at Allahabad", shortCode: "HC-ALD", courtType: "High Court", location: "Prayagraj" },
         { courtName: "High Court Allahabad (Lucknow Bench)", shortCode: "HC-LKO", courtType: "High Court", location: "Lucknow" },
-        { courtName: "Supreme Court of India", shortCode: "SCI", courtType: "Apex Court", location: "New Delhi" },
+        { courtName: "Supreme Court of India", shortCode: "SCI", courtType: "Court", location: "New Delhi" },
       ]);
       await CaseType.insertMany([
         { code: "WRIT-A", title: "Civil Writ (Service & Recruitment)", court: "High Court Allahabad", activeWritsCount: 0 },

@@ -93,7 +93,6 @@ export const registerStayOrder = async (req: AuthRequest, res: Response) => {
     }
 
     const orderDate = stayOrderDate ? new Date(stayOrderDate) : new Date();
-    // Default Rule: Art 226(3) Vacation Motion due within 14 days
     const defaultDeadline = new Date(orderDate);
     defaultDeadline.setDate(defaultDeadline.getDate() + 14);
 
@@ -165,10 +164,8 @@ export const triggerRedZoneAlerts = async (req: AuthRequest, res: Response) => {
       return diff <= 3;
     });
 
-    // Notification Trigger: Dispatch In-App + Email Alert for each critical contempt
     for (const item of alertList) {
       if (item.caseId) {
-        // Send alert to current logged-in authority and OIC
         const recipientUser = await User.findOne({ name: new RegExp(item.oicName.trim(), "i") });
         const targetId = recipientUser?._id || req.user?.id;
 
@@ -347,7 +344,6 @@ export const registerContemptNotice = async (req: AuthRequest, res: Response) =>
       status: "ACTIVE",
     });
 
-    // Sync Case
     caseDoc.isContemptNotice = true;
     caseDoc.contemptDeadlineDate = deadline;
     caseDoc.judicialStatus = "CONTEMPT_NOTICE";
@@ -425,7 +421,6 @@ export const closeAndArchiveCase = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Update or create compliance archival record
     let record = await ComplianceRecord.findOne({ caseId: caseDoc._id });
     if (!record) {
       record = new ComplianceRecord({
@@ -449,7 +444,6 @@ export const closeAndArchiveCase = async (req: AuthRequest, res: Response) => {
     record.closedAt = closeTime;
     await record.save();
 
-    // Mark Case file permanently archived
     caseDoc.judicialStatus = "DISPOSED";
     caseDoc.stage = "Case Complied & Archived";
     caseDoc.hasActiveStay = false;

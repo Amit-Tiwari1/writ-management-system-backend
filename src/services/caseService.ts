@@ -1,6 +1,7 @@
 import { Case, ICase } from "../models/Case";
-import { Petitioner } from "../models/Petitioner";
+import { CaseMovementHistory } from "../models/CaseMovementHistory";
 import { MockJudicialService } from "./mockJudicialService";
+import mongoose from "mongoose";
 
 export class CaseService {
   static async generateNextFileNo(): Promise<string> {
@@ -53,7 +54,6 @@ export class CaseService {
     return { exists: false };
   }
 
-
   static async syncCaseWithECourts(caseId: string) {
     const caseDoc = await Case.findById(caseId);
     if (!caseDoc) throw new Error("Case record not found.");
@@ -70,5 +70,42 @@ export class CaseService {
     caseDoc.lastSyncedAt = new Date();
     await caseDoc.save();
     return caseDoc;
+  }
+
+  static async recordFileMovement(params: {
+    caseId: mongoose.Types.ObjectId | string;
+    fileNo: string;
+    fromUser?: { id?: any; name?: string; designation?: string };
+    toUser: { id: any; name: string; designation: string };
+    actionType?: "FORWARD" | "RETURN" | "RECALL" | "INITIAL_INTAKE";
+    notingPurpose?: string;
+    remarks?: string;
+    receivedAt?: Date;
+    minuteNumber?: number;
+  }) {
+    const now = new Date();
+    const receivedDate = params.receivedAt || now;
+    const diffMs = Math.max(0, now.getTime() - new Date(receivedDate).getTime());
+    const holdHours = Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10;
+    const holdDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    return await CaseMovementHistory.create({
+      caseId: params.caseId,
+      fileNo: params.fileNo,
+      fromUserId: params.fromUser?.id,
+      fromOfficerName: params.fromUser?.name || "Legal Registry Desk",
+      fromDesignation: params.fromUser?.designation || "Intake Section",
+      toUserId: params.toUser.id,
+      toOfficerName: params.toUser.name,
+      toDesignation: params.toUser.designation,
+      actionType: params.actionType || "FORWARD",
+      notingPurpose: params.notingPurpose || "File Movement",
+      remarks: params.remarks || "",
+      receivedAt: receivedDate,
+      dispatchedAt: now,
+      holdDurationDays: holdDays,
+      holdDurationHours: holdHours,
+      minuteNumber: params.minuteNumber,
+    });
   }
 }

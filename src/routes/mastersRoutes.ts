@@ -45,7 +45,6 @@ const router = Router();
 
 router.get("/dropdowns", authenticateToken, getIntakeDropdownOptions);
 
-// Geographic Hierarchy
 router.get("/states", authenticateToken, getStates);
 router.post("/states", authenticateToken, createState);
 router.put("/states/:id", authenticateToken, updateState);
@@ -61,7 +60,6 @@ router.get("/districts", authenticateToken, getDistricts);
 router.post("/districts", authenticateToken, createDistrict);
 router.delete("/districts/:id", authenticateToken, deleteDistrict);
 
-// Judicial Hierarchy
 router.get("/courts", authenticateToken, getCourts);
 router.post("/courts", authenticateToken, createCourt);
 router.delete("/courts/:id", authenticateToken, deleteCourt);
@@ -70,7 +68,6 @@ router.get("/case-types", authenticateToken, getCaseTypes);
 router.post("/case-types", authenticateToken, createCaseType);
 router.delete("/case-types/:id", authenticateToken, deleteCaseType);
 
-// Board Taxonomy
 router.get("/categories", authenticateToken, getCategories);
 router.post("/categories", authenticateToken, createCategory);
 
@@ -83,7 +80,6 @@ router.post("/subjects", authenticateToken, createSubject);
 router.get("/custodians", authenticateToken, getSubjectCustodians);
 router.post("/custodians", authenticateToken, createSubjectCustodian);
 
-// Institutional Masters
 router.get("/departments", authenticateToken, getDepartments);
 router.post("/departments", authenticateToken, createDepartment);
 

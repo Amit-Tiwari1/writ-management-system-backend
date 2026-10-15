@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import { ReportService } from "../services/reportService";
 
-// 1. Get Report Data for Frontend Table
 export const getReportData = async (req: Request, res: Response) => {
   try {
     const {
@@ -40,7 +39,6 @@ export const getReportData = async (req: Request, res: Response) => {
   }
 };
 
-// 2. Download Excel Report
 export const exportReportExcel = async (req: Request, res: Response) => {
   try {
     const {
@@ -78,7 +76,6 @@ export const exportReportExcel = async (req: Request, res: Response) => {
   }
 };
 
-// 3. Download Watermarked PDF Report
 export const exportReportPdf = async (req: Request, res: Response) => {
   try {
     const {

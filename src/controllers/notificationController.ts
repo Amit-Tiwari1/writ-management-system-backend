@@ -34,7 +34,6 @@ export const getUserNotifications = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// 2. Quick unread counter for Top Navbar Bell Badge
 export const getUnreadCount = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
@@ -49,7 +48,6 @@ export const getUnreadCount = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// 3. Mark single notification as read
 export const markAsRead = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -69,7 +67,6 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// 4. Mark all notifications as read
 export const markAllAsRead = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;

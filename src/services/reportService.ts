@@ -19,7 +19,6 @@ export interface ReportFilterOptions {
 }
 
 export class ReportService {
-  // Build dynamic MongoDB Match Query based on Filters & Report Type
   static buildFilterQuery(options: ReportFilterOptions) {
     const query: any = {};
 
@@ -42,7 +41,6 @@ export class ReportService {
       query.assignedOIC = new RegExp(options.oic, "i");
     }
 
-    // Specific Report Type Custom Filters
     switch (options.reportType) {
       case "HEARING_DATE_RANGE":
         if (options.startDate && options.endDate) {
@@ -78,7 +76,6 @@ export class ReportService {
     return query;
   }
 
-  // 1. Fetch JSON Data for UI Grid with Pagination
   static async getReportData(options: ReportFilterOptions) {
     const query = this.buildFilterQuery(options);
     const page = Number(options.page) || 1;
@@ -125,7 +122,6 @@ export class ReportService {
     };
   }
 
-  // 2. Generate Professional Excel Workbook (.xlsx)
   static async generateExcelReport(options: ReportFilterOptions): Promise<Buffer> {
     const query = this.buildFilterQuery(options);
     const cases = await Case.find(query).sort({ ndoh: 1, createdAt: -1 }).lean();
@@ -136,7 +132,6 @@ export class ReportService {
 
     const worksheet = workbook.addWorksheet("MIS Legal Report");
 
-    // Header Title Banner
     worksheet.mergeCells("A1:K1");
     worksheet.getCell("A1").value = "UTTAR PRADESH POLICE RECRUITMENT AND PROMOTION BOARD, LUCKNOW";
     worksheet.getCell("A1").font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
@@ -148,7 +143,6 @@ export class ReportService {
     worksheet.getCell("A2").font = { name: "Arial", size: 10, italic: true, color: { argb: "FF334155" } };
     worksheet.getCell("A2").alignment = { vertical: "middle", horizontal: "center" };
 
-    // Column Headers
     const headers = [
       "S.No",
       "File Docket No",
@@ -176,7 +170,6 @@ export class ReportService {
       };
     });
 
-    // Populate Data Rows
     cases.forEach((c, idx) => {
       const row = worksheet.addRow([
         idx + 1,
@@ -209,7 +202,6 @@ export class ReportService {
       }
     });
 
-    // Auto-fit Column Widths
     worksheet.columns.forEach((col: any) => {
       let maxLen = 12;
       col.eachCell({ includeEmpty: true }, (cell: any) => {
@@ -222,7 +214,6 @@ export class ReportService {
     return (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
   }
 
-  // 3. Generate Official Watermarked PDF Document (.pdf)
   static async generatePdfReport(options: ReportFilterOptions): Promise<Buffer> {
     const query = this.buildFilterQuery(options);
     const cases = await Case.find(query).sort({ ndoh: 1, createdAt: -1 }).limit(100).lean();
@@ -235,7 +226,6 @@ export class ReportService {
       doc.on("end", () => resolve(Buffer.concat(buffers)));
       doc.on("error", (err) => reject(err));
 
-      // Page Background Watermark: "UP POLICE LEGAL CELL"
       doc.save();
       doc.rotate(-25, { origin: [doc.page.width / 2, doc.page.height / 2] });
       doc.fontSize(52).fillColor("#0f2744", 0.05).font("Helvetica-Bold");
@@ -244,7 +234,6 @@ export class ReportService {
       });
       doc.restore();
 
-      // Top Header Letterhead
       doc.fontSize(14).font("Helvetica-Bold").fillColor("#0f2744");
       doc.text("UTTAR PRADESH POLICE RECRUITMENT & PROMOTION BOARD", { align: "center" });
       doc.fontSize(9).font("Helvetica").fillColor("#475569");
@@ -257,7 +246,6 @@ export class ReportService {
       doc.text(`Generated: ${new Date().toLocaleString("en-IN")} | Total Records: ${cases.length}`, { align: "center" });
       doc.moveDown(0.8);
 
-      // Table Header Coordinates
       let y = doc.y;
       doc.rect(30, y, doc.page.width - 60, 20).fill("#0f2744");
 
@@ -273,15 +261,12 @@ export class ReportService {
 
       y += 22;
 
-      // Table Data Rows
       doc.font("Helvetica").fontSize(7).fillColor("#1e293b");
 
       cases.forEach((c, idx) => {
-        // Page overflow check
         if (y > doc.page.height - 45) {
           doc.addPage();
           y = 35;
-          // Re-draw watermark on next page
           doc.save();
           doc.rotate(-25, { origin: [doc.page.width / 2, doc.page.height / 2] });
           doc.fontSize(52).fillColor("#0f2744", 0.05).font("Helvetica-Bold");
@@ -290,7 +275,6 @@ export class ReportService {
           });
           doc.restore();
 
-          // Header
           doc.rect(30, y, doc.page.width - 60, 18).fill("#0f2744");
           doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(8);
           doc.text("S.No", 35, y + 5, { width: 30 });
@@ -305,7 +289,6 @@ export class ReportService {
           doc.font("Helvetica").fontSize(7).fillColor("#1e293b");
         }
 
-        // Alternating row background
         if (idx % 2 === 1) {
           doc.rect(30, y - 2, doc.page.width - 60, 16).fill("#f8fafc");
         }
@@ -323,7 +306,6 @@ export class ReportService {
         y += 16;
       });
 
-      // Bottom Footer Seal
       doc.fontSize(8).font("Helvetica-Bold").fillColor("#0f2744");
       doc.text("Digitally Certified by UPPRPB Legal Management System", 30, doc.page.height - 25, {
         align: "left",

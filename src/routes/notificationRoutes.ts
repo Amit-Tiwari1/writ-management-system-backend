@@ -1,4 +1,3 @@
-// backend/src/routes/notificationRoutes.ts
 
 import { Router } from "express";
 import { authenticateToken } from "../middlewares/authMiddleware";

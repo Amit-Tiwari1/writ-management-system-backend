@@ -19,9 +19,7 @@ import {
 } from "../models/Masters";
 
 export class MasterService {
-  /**
-   * Fast Dropdown Bundle: Initial form rendering bundle
-   */
+
   static async getCaseIntakeDropdowns() {
     const [states, districts, courts, caseTypes, categories, ranks, designations, departments] =
       await Promise.all([
@@ -52,12 +50,10 @@ export class MasterService {
     };
   }
 
-  // --- 1. Judicial Cascading ---
   static async getCaseTypesByCourt(courtId: string) {
     return CaseType.find({ courtId }).sort({ caseTypeName: 1 }).lean();
   }
 
-  // --- 2. Taxonomy Cascading ---
   static async getSubCategoriesByCategory(categoryId: string) {
     return CaseSubCategory.find({ categoryId }).sort({ subCategoryName: 1 }).lean();
   }
@@ -73,7 +69,6 @@ export class MasterService {
       .lean();
   }
 
-  // --- Geographic Helpers ---
   static async getAllStates() {
     return State.find().sort({ stateName: 1 }).lean();
   }

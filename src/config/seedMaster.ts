@@ -23,7 +23,7 @@ export const seedMastersIfEmpty = async () => {
   console.log("🌱 [BOOTSTRAP] Initiating Relational Masters Seeding...");
   console.log("========================================================");
 
-  // 1. Geographic Hierarchy: State -> Zone -> Range -> District
+ 
   let upState = await State.findOne({ stateCode: "UP" });
   if (!upState) {
     upState = await State.create({ stateName: "Uttar Pradesh", stateCode: "UP", country: "India" });
@@ -74,7 +74,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Districts Seeded: 7 Relational Districts");
   }
 
-  // 2. Judicial Hierarchy: Court -> CaseType
   let hcAllahabad = await Court.findOne({ shortCode: "HC-ALD" });
   if (!hcAllahabad) {
     hcAllahabad = await Court.create({
@@ -111,7 +110,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Case Types Seeded: 7 Records linked to HC Allahabad");
   }
 
-  // 3. Board Taxonomy Hierarchy: Category -> SubCategory -> Subject -> Custodian
   let recCat = await CaseCategory.findOne({ categoryName: "Recruitment" });
   if (!recCat) {
     recCat = await CaseCategory.create({ categoryName: "Recruitment", order: 1 });
@@ -167,7 +165,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Subject Custodian Seeded: Ravindra 42 (S.I.(M))");
   }
 
-  // 4. Institutional Ranks
   const rankCount = await Rank.countDocuments();
   if (rankCount === 0) {
     await Rank.insertMany([
@@ -181,7 +178,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Police Ranks Seeded: 6 Ranks (CT to SP)");
   }
 
-  // 5. Institutional Designations
   const designationCount = await Designation.countDocuments();
   if (designationCount === 0) {
     await Designation.insertMany([
@@ -189,13 +185,12 @@ export const seedMastersIfEmpty = async () => {
       { title: "Pairokar", authorityLevel: "Court Level", canSignPWC: false, canForwardFiles: true, defaultRole: "Pairokar" },
       { title: "S.I.(M)", authorityLevel: "Desk Level", canSignPWC: false, canForwardFiles: true, defaultRole: "Dealing Assistant" },
       { title: "A.S.I.(M)", authorityLevel: "Desk Level", canSignPWC: false, canForwardFiles: true, defaultRole: "Dealing Assistant" },
-      { title: "SP Legal", authorityLevel: "Apex Level", canSignPWC: true, canForwardFiles: true, defaultRole: "SP Legal" },
-      { title: "Chairman UPPRPB", authorityLevel: "Apex Secretariat", canSignPWC: true, canForwardFiles: true, defaultRole: "Super Admin" },
+      { title: "SP Legal", authorityLevel: "Level", canSignPWC: true, canForwardFiles: true, defaultRole: "SP Legal" },
+      { title: "Chairman UPPRPB", authorityLevel: " Secretariat", canSignPWC: true, canForwardFiles: true, defaultRole: "Super Admin" },
     ]);
     console.log("  [+] Designations Seeded: 6 Key Board Designations");
   }
 
-  // 6. Institutional Departments
   const deptCount = await Department.countDocuments();
   if (deptCount === 0) {
     await Department.insertMany([
@@ -207,7 +202,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Department/Units Seeded: 4 Units");
   }
 
-  // 7. Respondent Groups
   const respCount = await RespondentGroup.countDocuments();
   if (respCount === 0) {
     await RespondentGroup.insertMany([
@@ -218,7 +212,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Respondent Groups Seeded: 3 Organizations");
   }
 
-  // 8. Action Taken Mappings
   const actionCount = await ActionMapping.countDocuments();
   if (actionCount === 0) {
     await ActionMapping.insertMany([
@@ -229,7 +222,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Action Taken Mappings Seeded: 3 Judicial Directives");
   }
 
-  // 9. Institution Aliases & Monitored Counsels
   const aliasCount = await Alias.countDocuments();
   if (aliasCount === 0) {
     await Alias.insertMany([
@@ -244,7 +236,6 @@ export const seedMastersIfEmpty = async () => {
     console.log("  [+] Aliases & Counsels Seeded");
   }
 
-  // Verification Counts Summary Table
   const [
     cState, cZone, cRange, cDistrict,
     cCourt, cCaseType,

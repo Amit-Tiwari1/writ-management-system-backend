@@ -29,9 +29,6 @@ export const getIntakeDropdownOptions = async (req: Request, res: Response) => {
   }
 };
 
-// ==========================================
-// 1. GEOGRAPHY (State -> Zone -> Range -> District)
-// ==========================================
 
 export const getStates = async (req: Request, res: Response) => {
   try {
@@ -158,9 +155,6 @@ export const deleteDistrict = async (req: Request, res: Response) => {
   }
 };
 
-// ==========================================
-// 2. JUDICIAL (Court -> CaseType)
-// ==========================================
 
 export const getCourts = async (req: Request, res: Response) => {
   try {
@@ -232,10 +226,6 @@ export const deleteCaseType = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ==========================================
-// 3. TAXONOMY (Category -> SubCategory -> Subject -> Custodian)
-// ==========================================
 
 export const getCategories = async (req: Request, res: Response) => {
   try {
@@ -322,9 +312,6 @@ export const createSubjectCustodian = async (req: Request, res: Response) => {
   }
 };
 
-// ==========================================
-// 4. DEPARTMENTS, RANKS & DESIGNATIONS
-// ==========================================
 
 export const getDepartments = async (req: Request, res: Response) => {
   try {

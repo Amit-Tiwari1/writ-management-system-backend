@@ -12,26 +12,22 @@ export interface IComplianceRecord extends Document {
 
   recordType: "STAY" | "CONTEMPT" | "GENERAL_DIRECTION";
 
-  // --- 5.1 Stay Details ---
   stayOrderScope?: string;
   stayOrderDate?: Date;
   vacationMotionStatus?: "DRAFT PENDING CSC" | "LISTED FOR ARGUMENTS" | "URGENT ACTION REQUIRED" | "VACATION_FILED" | "DISPOSED";
   vacationDeadline?: Date;
   vacationFilingDate?: Date;
 
-  // --- 5.2 Contempt Details ---
   contemptNumber?: string;
-  contemnorTitle?: string; // e.g. "Chairman UPPRPB", "Member Secretary / ADG"
+  contemnorTitle?: string;
   courtDirections?: string;
   directionGivenDate?: Date;
   complianceDeadlineDate?: Date;
   totalComplianceDays?: number;
-  complianceProgress?: string; // e.g. "Order Drafted, Awaiting Signature"
+  complianceProgress?: string;
   severityLevel: "CRITICAL" | "HIGH_WARNING" | "MONITORED";
-
-  // --- 5.3 Archival Details ---
   status: "ACTIVE" | "COMPLIED_AND_CLOSED";
-  actionTakenByBoard?: string; // e.g. "Appointment letter issued as Sub Inspector on 12-Aug-2026"
+  actionTakenByBoard?: string;
   complianceAffidavitDate?: Date;
   complianceProofDocId?: mongoose.Types.ObjectId;
   complianceProofDocUrl?: string;

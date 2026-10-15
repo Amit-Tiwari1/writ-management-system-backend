@@ -252,7 +252,6 @@ export const createRoleWithPermissions = async (req: Request, res: Response) => 
 
     const allMenus = await Menu.find().sort({ order: 1 });
 
-    // Map permissions across all system menus
     const permissionsToSave = allMenus.map((m) => {
       const customPerm = (permissions || []).find((p: any) => p.menuKey === m.key);
       return {

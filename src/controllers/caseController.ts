@@ -9,6 +9,8 @@ import { AuthRequest } from "../middlewares/authMiddleware";
 import { logAuditEvent } from "../utils/auditLogger";
 import { NotificationService } from "../services/notificationService";
 import { User } from "../models/User";
+import { renderPdfDocument } from "../utils/pdfTemplate";
+import { CaseMovementHistory } from "../models/CaseMovementHistory";
 
 export const getCasesRegister = async (req: Request, res: Response) => {
   try {
@@ -17,12 +19,14 @@ export const getCasesRegister = async (req: Request, res: Response) => {
       court,
       wing,
       statusFilter,
+      hearingDate,
       page = 1,
       limit = 10,
     } = req.query;
 
     const query: any = {};
-    if (search) {
+
+    if (search && String(search).trim().length >= 3) {
       const searchRegex = new RegExp(String(search).trim(), "i");
       query.$or = [
         { fileNo: searchRegex },
@@ -35,11 +39,25 @@ export const getCasesRegister = async (req: Request, res: Response) => {
     }
 
     if (court && court !== "ALL" && court !== "All Courts") {
-      query.courtCode = String(court);
+      query.$or = [
+        ...(query.$or || []),
+        { courtCode: String(court) },
+        { court: new RegExp(String(court).trim(), "i") },
+      ];
     }
+
     if (wing && wing !== "ALL" && wing !== "All Wings") {
       query.sectionWing = String(wing);
     }
+
+    if (hearingDate) {
+      const start = new Date(String(hearingDate));
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(String(hearingDate));
+      end.setHours(23, 59, 59, 999);
+      query.ndoh = { $gte: start,$lte: end };
+    }
+
     if (statusFilter === "with_connected") {
       query["connectedWrits.0"] = { $exists: true };
     } else if (statusFilter === "advance_notice") {
@@ -207,6 +225,20 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
       tier = 2;
     }
 
+    let initialHolderId: any = undefined;
+    let holderLocation = "Legal Cell Desk";
+    let oicUser: any = null;
+
+    if (assignedOIC && assignedOIC !== "Unassigned (OIC)") {
+      oicUser = await User.findOne({
+        name: new RegExp(assignedOIC.trim(), "i"),
+      });
+      if (oicUser) {
+        initialHolderId = oicUser._id;
+        holderLocation = `${oicUser.designation} (${oicUser.name})`;
+      }
+    }
+
     const newCase = await Case.create({
       fileNo,
       noticeNumber: noticeNumber || "",
@@ -234,6 +266,12 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
       isContemptNotice: !!isContemptNotice,
       coPetitionersCount: petitioners.length,
       syncStatus,
+      internalHold: {
+        currentHolderId: initialHolderId,
+        location: holderLocation,
+        holdDays: 0,
+        heldSince: new Date(),
+      },
     });
 
     if (petitioners.length > 0) {
@@ -253,31 +291,42 @@ export const registerCaseIntake = async (req: AuthRequest, res: Response) => {
       await Petitioner.insertMany(petDocs);
     }
 
-    // Notification Trigger: Designated OIC ko intimation aur email
-    if (newCase.assignedOIC && newCase.assignedOIC !== "Unassigned (OIC)") {
-      const oicUser = await User.findOne({
-        name: new RegExp(newCase.assignedOIC.trim(), "i"),
+    if (oicUser) {
+      await CaseService.recordFileMovement({
+        caseId: newCase._id,
+        fileNo: newCase.fileNo,
+        fromUser: {
+          id: req.user?.id,
+          name: req.user?.name || "Registry Officer",
+          designation: req.user?.designation || "Case Intake Desk",
+        },
+        toUser: {
+          id: oicUser._id,
+          name: oicUser.name,
+          designation: oicUser.designation,
+        },
+        actionType: "INITIAL_INTAKE",
+        notingPurpose: "Case Docket Ingestion & Initial OIC Assignment",
+        receivedAt: newCase.createdAt,
       });
 
-      if (oicUser) {
-        NotificationService.sendNotification({
-          recipientId: oicUser._id,
-          caseId: newCase._id,
-          fileNo: newCase.fileNo,
-          type: "HEARING_REMINDER",
-          title: `New Case Assigned: ${newCase.fileNo}`,
-          message: `A fresh case docket ${newCase.writNumber || newCase.noticeNumber} (${newCase.leadPetitioner}) has been designated to your desk as OIC.`,
-          isUrgent: newCase.hasActiveStay || newCase.isContemptNotice,
-          senderName: req.user?.name || req.user?.username || "Registry Officer",
-          senderDesignation: req.user?.designation || "Case Intake Desk",
-          extraMeta: {
-            writOrNotice: newCase.writNumber || newCase.noticeNumber,
-            court: newCase.court,
-            petitioner: newCase.leadPetitioner,
-            roleAssigned: "Officer-in-Charge (OIC)",
-          },
-        }).catch((err) => console.error("[OIC Intake Notification Error]:", err.message));
-      }
+      NotificationService.sendNotification({
+        recipientId: oicUser._id,
+        caseId: newCase._id,
+        fileNo: newCase.fileNo,
+        type: "HEARING_REMINDER",
+        title: `New Case Assigned: ${newCase.fileNo}`,
+        message: `A fresh case docket ${newCase.writNumber || newCase.noticeNumber} (${newCase.leadPetitioner}) has been designated to your desk as OIC.`,
+        isUrgent: newCase.hasActiveStay || newCase.isContemptNotice,
+        senderName: req.user?.name || req.user?.username || "Registry Officer",
+        senderDesignation: req.user?.designation || "Case Intake Desk",
+        extraMeta: {
+          writOrNotice: newCase.writNumber || newCase.noticeNumber,
+          court: newCase.court,
+          petitioner: newCase.leadPetitioner,
+          roleAssigned: "Officer-in-Charge (OIC)",
+        },
+      }).catch((err) => console.error("[OIC Intake Notification Error]:", err.message));
     }
 
     await logAuditEvent(
@@ -452,6 +501,210 @@ export const linkDiscoveredWritToNotice = async (req: Request, res: Response) =>
       success: true,
       message: `Docket ${docketNo} successfully upgraded with Writ No: ${caseNoYear}`,
       case: caseDoc,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const exportCasesController = async (req: AuthRequest, res: Response) => {
+  try {
+    const { search, court, wing, statusFilter, format = "csv" } = req.query;
+
+    const query: any = {};
+
+    if (search && String(search).trim().length >= 3) {
+      const searchRegex = new RegExp(String(search).trim(), "i");
+      query.$or = [
+        { fileNo: searchRegex },
+        { noticeNumber: searchRegex },
+        { writNumber: searchRegex },
+        { cnrNumber: searchRegex },
+        { leadPetitioner: searchRegex },
+      ];
+    }
+
+    if (court && court !== "ALL" && court !== "All Courts") {
+      query.$or = [
+        ...(query.$or || []),
+        { courtCode: String(court) },
+        { court: new RegExp(String(court).trim(), "i") },
+      ];
+    }
+
+    if (wing && wing !== "ALL" && wing !== "All Wings") {
+      query.sectionWing = String(wing);
+    }
+
+    if (statusFilter === "with_connected") {
+      query["connectedWrits.0"] = { $exists: true };
+    } else if (statusFilter === "advance_notice") {
+      query.identifierTier = 2;
+    } else if (statusFilter === "stay") {
+      query.hasActiveStay = true;
+    } else if (statusFilter === "contempt") {
+      query.isContemptNotice = true;
+    }
+
+    const cases = await Case.find(query).sort({ createdAt: -1 }).lean();
+
+    if (format === "pdf") {
+      const rowsHtml = cases
+        .map(
+          (c, idx) => `
+        <tr>
+          <td style="text-align: center; font-weight: 700;">${idx + 1}</td>
+          <td style="font-family: monospace; font-weight: 800; color: #0f2744;">${c.fileNo}</td>
+          <td style="font-weight: 700; color: #1e40af;">${c.writNumber || c.noticeNumber || "--"}</td>
+          <td>${c.court || "--"} <span style="color:#64748b;">(${c.benchLocation || "ALD"})</span></td>
+          <td style="font-weight: 600;">${c.leadPetitioner || "--"}</td>
+          <td>${c.assignedOIC || "Unassigned"}</td>
+          <td style="font-size: 8.5px; font-weight: 700; text-align: center;">
+            <span style="color: ${c.hasActiveStay ? "#b91c1c" : c.isContemptNotice ? "#c2410c" : "#1e293b"};">
+              ${c.hasActiveStay ? "STAY ACTIVE" : c.isContemptNotice ? "CONTEMPT" : c.stage || "REGISTERED"}
+            </span>
+          </td>
+        </tr>`
+        )
+        .join("");
+
+      const contentHtml = `
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 28px; text-align: center;">#</th>
+              <th style="width: 110px;">File Docket No</th>
+              <th style="width: 110px;">Writ / Notice No</th>
+              <th>Court & Bench</th>
+              <th>Lead Petitioner</th>
+              <th>Assigned OIC</th>
+              <th style="width: 90px; text-align: center;">Judicial Stage</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              cases.length > 0
+                ? rowsHtml
+                : `<tr><td colspan="7" style="text-align:center; padding: 16px; color:#94a3b8;">No dockets matching filter criteria.</td></tr>`
+            }
+          </tbody>
+        </table>
+      `;
+
+      const filterSummary = [
+        court && court !== "ALL" ? `Court: ${court}` : null,
+        wing && wing !== "ALL" ? `Wing: ${wing}` : null,
+        search ? `Search: "${search}"` : null,
+      ]
+        .filter(Boolean)
+        .join(" | ") || "All Registered Cases";
+
+      const fullHtml = renderPdfDocument({
+        reportTitle: "Writ Litigation Master Registry Register",
+        reportSubtitle: `Consolidated Dossier · Total Records: ${cases.length}`,
+        generatedBy: {
+          name: req.user?.name || req.user?.username || "Legal Officer",
+          designation: req.user?.designation,
+          role: req.user?.role,
+        },
+        filterMetaText: filterSummary,
+        contentHtml,
+      });
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(200).send(fullHtml);
+    }
+
+    const headers = [
+      "File Docket No",
+      "Writ Number",
+      "Notice Number",
+      "CNR Number",
+      "Court",
+      "Bench",
+      "Lead Petitioner",
+      "Respondent",
+      "Assigned OIC",
+      "Pairokar",
+      "Section Wing",
+      "NDOH",
+      "Stage",
+      "Stay in Force",
+      "Contempt Alert",
+    ];
+
+    const rows = cases.map((c) => [
+      `"${c.fileNo}"`,
+      `"${c.writNumber || "--"}"`,
+      `"${c.noticeNumber || "--"}"`,
+      `"${c.cnrNumber || "--"}"`,
+      `"${c.court || "--"}"`,
+      `"${c.benchLocation || "--"}"`,
+      `"${(c.leadPetitioner || "").replace(/"/g, '""')}"`,
+      `"${(c.respondentString || "").replace(/"/g, '""')}"`,
+      `"${c.assignedOIC || "--"}"`,
+      `"${c.assignedPairokar || "--"}"`,
+      `"${c.sectionWing || "--"}"`,
+      `"${c.ndoh ? new Date(c.ndoh).toLocaleDateString("en-GB") : "--"}"`,
+      `"${c.stage || "--"}"`,
+      c.hasActiveStay ? "YES" : "NO",
+      c.isContemptNotice ? "YES" : "NO",
+    ]);
+
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=UPPRPB_Cases_${Date.now()}.csv`
+    );
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getDropdownWritsList = async (req: Request, res: Response) => {
+  try {
+    const cases = await Case.find({})
+      .select("_id fileNo writNumber noticeNumber cnrNumber leadPetitioner court benchLocation stage assignedOIC")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const formatted = cases.map((c) => ({
+      id: c._id,
+      fileNo: c.fileNo,
+      writNumber: c.writNumber || c.noticeNumber || "Draft Docket",
+      label: `${c.fileNo} · ${c.writNumber || c.noticeNumber || "Notice"} — ${c.leadPetitioner}`,
+      petitioner: c.leadPetitioner,
+      court: `${c.court} (${c.benchLocation})`,
+      stage: c.stage,
+      oic: c.assignedOIC,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: formatted.length,
+      data: formatted,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getCaseMovementHistory = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const history = await CaseMovementHistory.find({ caseId: id })
+      .populate("fromUserId", "name designation rank")
+      .populate("toUserId", "name designation rank")
+      .sort({ dispatchedAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      count: history.length,
+      data: history,
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });

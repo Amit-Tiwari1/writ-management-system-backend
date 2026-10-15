@@ -1,8 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
 
-// ==========================================
-// 1. GEOGRAPHIC HIERARCHY (State -> Zone -> Range -> District)
-// ==========================================
 
 export interface IState extends Document {
   stateName: string;
@@ -67,14 +64,11 @@ export const District = mongoose.model<IDistrict>(
 );
 District.schema.index({ districtName: 1, stateId: 1 }, { unique: true });
 
-// ==========================================
-// 2. JUDICIAL HIERARCHY (Court -> CaseType)
-// ==========================================
 
 export interface ICourt extends Document {
-  courtName: string; // e.g. "High Court Allahabad", "Supreme Court of India"
-  shortCode: string; // e.g. "HC-ALD", "HC-LKO", "SCI"
-  courtType: string; // "HIGH_COURT", "APEX_COURT", "TRIBUNAL"
+  courtName: string;
+  shortCode: string;
+  courtType: string;
   location: string;
 }
 export const Court = mongoose.model<ICourt>(

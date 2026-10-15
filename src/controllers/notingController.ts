@@ -6,6 +6,8 @@ import { User } from "../models/User";
 import { Notification } from "../models/Notification";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import { NotificationService } from "../services/notificationService";
+import { CaseService } from "../services/caseService";
+import { renderPdfDocument } from "../utils/pdfTemplate";
 
 export const getForwardableOfficers = async (
   req: AuthRequest,
@@ -281,7 +283,28 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
 
     await minute.save();
 
-    // Re-route Case's internal hold & currentHolderId
+    const previousReceivedAt = caseItem.internalHold?.heldSince || caseItem.createdAt;
+
+    await CaseService.recordFileMovement({
+      caseId: caseItem._id,
+      fileNo: caseItem.fileNo,
+      fromUser: {
+        id: req.user?.id,
+        name: minute.signature.signerName,
+        designation: minute.signature.signerDesignation,
+      },
+      toUser: {
+        id: recipientUser._id,
+        name: recipientUser.name,
+        designation: recipientUser.designation,
+      },
+      actionType: "FORWARD",
+      notingPurpose: minute.notingPurpose,
+      remarks: minute.minuteTitle,
+      receivedAt: previousReceivedAt,
+      minuteNumber: minute.minuteNumber,
+    });
+
     caseItem.assignedOIC = recipientUser.name;
     caseItem.internalHold = {
       currentHolderId: recipientUser._id,
@@ -291,7 +314,6 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
     };
     await caseItem.save();
 
-    // Notification Trigger: In-App Record + Branded Resend Email Dispatch
     NotificationService.sendNotification({
       recipientId: recipientUser._id,
       caseId: caseItem._id,
@@ -361,9 +383,11 @@ export const verifyMinuteSignature = async (req: Request, res: Response) => {
   }
 };
 
-export const generatePrintMemo = async (req: Request, res: Response) => {
+export const generatePrintMemo = async (req: AuthRequest, res: Response) => {
   try {
     const { caseId } = req.params;
+    const { format } = req.query;
+
     const [caseItem, minutes] = await Promise.all([
       Case.findById(caseId).lean(),
       NotingMinute.find({ caseId, status: "SIGNED_AND_FORWARDED" })
@@ -375,6 +399,77 @@ export const generatePrintMemo = async (req: Request, res: Response) => {
       return res
         .status(404)
         .json({ success: false, message: "Case not found." });
+    }
+
+    const minutesHtml =
+      minutes.length > 0
+        ? minutes
+            .map((m) => {
+              const signDate = m.signature?.signedAt
+                ? new Date(m.signature.signedAt).toLocaleString("en-IN", {
+                    timeZone: "Asia/Kolkata",
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "--";
+
+              return `
+              <div class="minute-card">
+                <div class="minute-head">
+                  <span class="minute-tag">टिप्पणी संख्या (Minute #${m.minuteNumber}) — ${m.notingPurpose}</span>
+                  <span style="font-size: 9.5px; color: #166534; font-weight: 600;">Signed: ${signDate}</span>
+                </div>
+                <div class="minute-body">${m.content}</div>
+                <div class="minute-footer">
+                  <div>
+                    ${
+                      m.forwardedToOfficerName
+                        ? `<span>Forwarded To: <strong>${m.forwardedToOfficerName}</strong> (${m.forwardedToDesignation || "Recipient Desk"})</span>`
+                        : ""
+                    }
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="font-weight: 700; color: #0f172a;">${m.signature?.signerName || m.authorName}</div>
+                    <div style="color: #64748b;">${m.signature?.signerDesignation || m.authorDesignation}</div>
+                    <div class="signature-badge">[e-Signed: ${m.signature?.certificateSerialNumber || "DSP-SIG-VALID"}]</div>
+                  </div>
+                </div>
+              </div>
+            `;
+            })
+            .join("")
+        : `<div style="text-align: center; padding: 30px; color: #94a3b8; font-style: italic;">No digitally signed minutes recorded on this file docket yet.</div>`;
+
+    const docketSummaryHtml = `
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10px;">
+        <div><strong>Writ / Notice No:</strong> <span style="color: #1e40af; font-weight: 700;">${caseItem.writNumber || caseItem.noticeNumber || "--"}</span></div>
+        <div><strong>Court & Bench:</strong> ${caseItem.court} (${caseItem.benchLocation} Bench)</div>
+        <div><strong>Lead Litigant:</strong> ${caseItem.leadPetitioner}</div>
+        <div><strong>Current Holder (OIC):</strong> <span style="color: #0f2744; font-weight: 700;">${caseItem.assignedOIC}</span></div>
+        <div><strong>Next Hearing (NDOH):</strong> ${caseItem.ndoh ? new Date(caseItem.ndoh).toLocaleDateString("en-GB") : "Not Listed"}</div>
+        <div><strong>Internal Docket Ref:</strong> <span style="font-family: monospace;">${caseItem.fileNo}</span></div>
+      </div>
+      ${minutesHtml}
+    `;
+
+    if (format === "pdf" || format === "html") {
+      const renderedDoc = renderPdfDocument({
+        reportTitle: "नोटिंग पत्रावली (Green Noting Sheet Ledger)",
+        reportSubtitle: `File Docket: ${caseItem.fileNo} · ${caseItem.writNumber || caseItem.leadPetitioner}`,
+        generatedBy: {
+          name: req.user?.name || req.user?.username || "Legal Officer",
+          designation: req.user?.designation,
+          role: req.user?.role,
+        },
+        filterMetaText: `Court: ${caseItem.court}`,
+        contentHtml: docketSummaryHtml,
+      });
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(200).send(renderedDoc);
     }
 
     return res.status(200).json({
