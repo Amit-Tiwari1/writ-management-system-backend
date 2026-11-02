@@ -8,6 +8,11 @@ const ALLOWED_MIME_TYPES = [
   "image/webp",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/msword",
+  "text/csv",
+  "text/plain",
+  "application/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ];
 
 const fileFilter = (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {

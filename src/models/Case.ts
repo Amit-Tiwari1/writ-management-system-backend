@@ -1,153 +1,266 @@
-import mongoose, { Document, Schema } from "mongoose";
+import mongoose, { Schema } from "mongoose";
+import { ICase, IConnectedWrit } from "../types/case.types";
 
-export interface IConnectedWrit {
-  caseId?: mongoose.Types.ObjectId;
-  writNumber: string;
-  cnrNumber?: string;
-  petitionerName?: string;
-  taggedDate?: Date;
-}
-
-const ConnectedWritSchema = new Schema<IConnectedWrit>({
-  caseId: { type: Schema.Types.ObjectId, ref: "Case" },
-  writNumber: { type: String, required: true },
-  cnrNumber: { type: String, default: "" },
-  petitionerName: { type: String, default: "" },
-  taggedDate: { type: Date, default: Date.now },
-});
-
-export interface ICase extends Document {
-  fileNo: string;
-  noticeNumber?: string;
-  writNumber?: string;
-  cnrNumber?: string;
-  identifierTier: 1 | 2 | 3 | 4;
-  courtId?: mongoose.Types.ObjectId;
-  court: string;
-  courtCode: string;
-  caseTypeId?: mongoose.Types.ObjectId;
-  caseType: string;
-  caseNumber?: string;
-  caseYear?: number;
-  benchLocation: "Allahabad" | "Lucknow" | "New Delhi";
-  courtRoomNo?: string;
-  coramBench?: string;
-  leadPetitioner: string;
-  respondentString: string;
-  petitionerAdvocate?: string;
-  stateCounsel?: string;
-  assignedOIC: string;
-  assignedPairokar: string;
-  sectionWing: string;
-  categoryId?: mongoose.Types.ObjectId;
-  category: string;
-  subCategoryId?: mongoose.Types.ObjectId;
-  subCategory?: string;
-  subjectId?: mongoose.Types.ObjectId;
-  disputeSubject: string;
-  examCycle: string;
-  stage: string;
-  judicialStatus: "PRE_NOTICE" | "ACTIVE" | "PENDING_PWC" | "STAY_IN_FORCE" | "CONTEMPT_NOTICE" | "DISPOSED" | "ARCHIVED";
-  internalHold: {
-    currentHolderId?: mongoose.Types.ObjectId;
-    location: string;
-    holdDays: number;
-    heldSince?: Date;
-  };
-  ndoh: Date | null;
-  listingItemNo?: string;
-  hasActiveStay: boolean;
-  stayScope?: string;
-  stayGrantedDate?: Date;
-  stayVacationDueDate?: Date;
-  isContemptNotice: boolean;
-  contemptDeadlineDate?: Date;
-  connectedWrits: IConnectedWrit[];
-  coPetitionersCount: number;
-  syncStatus: "LIVE_SYNCED" | "SCHEDULED" | "MANUAL_DOCKET" | "DISCREPANCY";
-  lastSyncedAt?: Date;
-  legacyData?: {
-    oldFileNo?: string;
-    oldNoticeYear?: string;
-    rawForwarded?: string;
-    orderStatus?: string;
-  };
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-
+const ConnectedWritSchema = new Schema<IConnectedWrit>(
+  {
+    caseId: { type: Schema.Types.ObjectId, ref: "Case" },
+    writNumber: { type: String, required: true, trim: true },
+    cnrNumber: { type: String, default: "", trim: true },
+    petitionerName: { type: String, default: "", trim: true },
+    taggedDate: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
 
 const CaseSchema = new Schema<ICase>(
   {
-    fileNo: { type: String, required: true, unique: true, trim: true, index: true },
-    noticeNumber: { type: String, trim: true, default: "", index: true },
-    writNumber: { type: String, trim: true, default: "", index: true },
-    cnrNumber: { type: String, trim: true, default: "", uppercase: true, index: true },
-    identifierTier: { type: Number, enum: [1, 2, 3, 4], default: 1 },
-    courtId: { type: Schema.Types.ObjectId, ref: "Court" },
-    court: { type: String, required: true },
-    courtCode: { type: String, default: "HC-ALD" },
-    caseTypeId: { type: Schema.Types.ObjectId, ref: "CaseType" },
-    caseType: { type: String, default: "WRIT-A" },
-    caseNumber: { type: String, default: "" },
-    caseYear: { type: Number, default: new Date().getFullYear() },
-    benchLocation: { type: String, enum: ["Allahabad", "Lucknow", "New Delhi"], default: "Allahabad" },
-    courtRoomNo: { type: String, default: "--" },
-    coramBench: { type: String, default: "--" },
-    leadPetitioner: { type: String, required: true },
-    respondentString: { type: String, default: "State of U.P. & Chairman UPPRPB" },
-    petitionerAdvocate: { type: String, default: "--" },
-    stateCounsel: { type: String, default: "Chief Standing Counsel (CSC)" },
-    assignedOIC: { type: String, default: "Unassigned (OIC)" },
-    assignedPairokar: { type: String, default: "Unassigned (Pairokar)" },
-    sectionWing: { type: String, default: "Recruitment Wing" },
-    categoryId: { type: Schema.Types.ObjectId, ref: "CaseCategory" },
-    category: { type: String, default: "Recruitment" },
-    subCategoryId: { type: Schema.Types.ObjectId, ref: "CaseSubCategory" },
-    subCategory: { type: String, default: "--" },
-    subjectId: { type: Schema.Types.ObjectId, ref: "CaseSubject" },
-    disputeSubject: { type: String, default: "General Service Matter" },
-    examCycle: { type: String, default: "2023-24" },
-    stage: { type: String, default: "Advance Notice Stage" },
+    fileNo: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true,
+    },
+    noticeNumber: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true,
+    },
+    writNumber: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true,
+    },
+    cnrNumber: {
+      type: String,
+      trim: true,
+      default: "",
+      uppercase: true,
+      index: true,
+    },
+    identifierTier: {
+      type: Number,
+      enum: [1, 2, 3, 4],
+      default: 1,
+    },
+    courtId: {
+      type: Schema.Types.ObjectId,
+      ref: "Court",
+    },
+    court: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    courtCode: {
+      type: String,
+      default: "HC-ALD",
+      trim: true,
+    },
+    caseTypeId: {
+      type: Schema.Types.ObjectId,
+      ref: "CaseType",
+    },
+    caseType: {
+      type: String,
+      default: "WRIT-A",
+      trim: true,
+    },
+    caseNumber: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    caseYear: {
+      type: Number,
+      default: () => new Date().getFullYear(),
+    },
+    benchLocation: {
+      type: String,
+      enum: ["Allahabad", "Lucknow", "New Delhi"],
+      default: "Allahabad",
+    },
+    courtRoomNo: {
+      type: String,
+      default: "--",
+      trim: true,
+    },
+    coramBench: {
+      type: String,
+      default: "--",
+      trim: true,
+    },
+    leadPetitioner: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    respondentString: {
+      type: String,
+      default: "State of U.P. & Chairman UPPRPB",
+      trim: true,
+    },
+    petitionerAdvocate: {
+      type: String,
+      default: "--",
+      trim: true,
+    },
+    stateCounsel: {
+      type: String,
+      default: "Chief Standing Counsel (CSC)",
+      trim: true,
+    },
+    assignedOIC: {
+      type: String,
+      default: "Unassigned (OIC)",
+      trim: true,
+    },
+    assignedPairokar: {
+      type: String,
+      default: "Unassigned (Pairokar)",
+      trim: true,
+    },
+    sectionWing: {
+      type: String,
+      default: "Recruitment Wing",
+      trim: true,
+    },
+    categoryId: {
+      type: Schema.Types.ObjectId,
+      ref: "CaseCategory",
+    },
+    category: {
+      type: String,
+      default: "Direct Recruitment",
+      trim: true,
+    },
+    subCategoryId: {
+      type: Schema.Types.ObjectId,
+      ref: "CaseSubCategory",
+    },
+    subCategory: {
+      type: String,
+      default: "--",
+      trim: true,
+    },
+    subjectId: {
+      type: Schema.Types.ObjectId,
+      ref: "CaseSubject",
+    },
+    disputeSubject: {
+      type: String,
+      default: "General Service Matter",
+      trim: true,
+    },
+    examCycle: {
+      type: String,
+      default: "2023-24",
+      trim: true,
+    },
+    stage: {
+      type: String,
+      default: "Advance Notice Stage",
+      trim: true,
+    },
     judicialStatus: {
       type: String,
-      enum: ["PRE_NOTICE", "ACTIVE", "PENDING_PWC", "STAY_IN_FORCE", "CONTEMPT_NOTICE", "DISPOSED", "ARCHIVED"],
+      enum: [
+        "PRE_NOTICE",
+        "ACTIVE",
+        "PENDING_PWC",
+        "STAY_IN_FORCE",
+        "CONTEMPT_NOTICE",
+        "DISPOSED",
+        "ARCHIVED",
+      ],
       default: "ACTIVE",
+      index: true,
     },
     internalHold: {
-      currentHolderId: { type: Schema.Types.ObjectId, ref: "User", index: true },
-      location: { type: String, default: "Legal Desk" },
-      holdDays: { type: Number, default: 0 },
-      heldSince: { type: Date, default: Date.now },
+      currentHolderId: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        index: true,
+      },
+      location: {
+        type: String,
+        default: "Legal Desk",
+        trim: true,
+      },
+      holdDays: {
+        type: Number,
+        default: 0,
+      },
+      heldSince: {
+        type: Date,
+        default: Date.now,
+      },
     },
-
-    ndoh: { type: Date, default: null, index: true },
-    listingItemNo: { type: String, default: "--" },
-    hasActiveStay: { type: Boolean, default: false, index: true },
-    stayScope: { type: String, default: "" },
-    stayGrantedDate: { type: Date },
-    stayVacationDueDate: { type: Date },
-    isContemptNotice: { type: Boolean, default: false, index: true },
-    contemptDeadlineDate: { type: Date },
+    ndoh: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    listingItemNo: {
+      type: String,
+      default: "--",
+      trim: true,
+    },
+    hasActiveStay: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    stayScope: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    stayGrantedDate: {
+      type: Date,
+    },
+    stayVacationDueDate: {
+      type: Date,
+    },
+    isContemptNotice: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    contemptDeadlineDate: {
+      type: Date,
+    },
     connectedWrits: [ConnectedWritSchema],
-    coPetitionersCount: { type: Number, default: 0 },
+    coPetitionersCount: {
+      type: Number,
+      default: 0,
+    },
     syncStatus: {
       type: String,
       enum: ["LIVE_SYNCED", "SCHEDULED", "MANUAL_DOCKET", "DISCREPANCY"],
       default: "MANUAL_DOCKET",
     },
-    lastSyncedAt: { type: Date, default: null },
+    lastSyncedAt: {
+      type: Date,
+      default: null,
+    },
     legacyData: {
-      oldFileNo: { type: String, default: "" },
-      oldNoticeYear: { type: String, default: "" },
-      rawForwarded: { type: String, default: "" },
-      orderStatus: { type: String, default: "" },
+      oldFileNo: { type: String, default: "", trim: true },
+      oldNoticeYear: { type: String, default: "", trim: true },
+      rawForwarded: { type: String, default: "", trim: true },
+      orderStatus: { type: String, default: "", trim: true },
     },
   },
   { timestamps: true }
 );
 
-CaseSchema.index({ fileNo: "text", writNumber: "text", noticeNumber: "text", leadPetitioner: "text" });
+CaseSchema.index({
+  fileNo: "text",
+  writNumber: "text",
+  noticeNumber: "text",
+  leadPetitioner: "text",
+});
 
 export const Case = mongoose.model<ICase>("Case", CaseSchema);

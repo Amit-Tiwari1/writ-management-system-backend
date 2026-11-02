@@ -1,4 +1,3 @@
-
 export interface MockCNRDetails {
   cnrNumber: string;
   court: string;
@@ -17,18 +16,42 @@ export interface MockCNRDetails {
   stage: string;
 }
 
-export class MockJudicialService {
+export interface MockCauseListFeedItem {
+  court: string;
+  bench: "Allahabad" | "Lucknow";
+  causeListDate: string;
+  courtHall: string;
+  itemNo: string;
+  caseType: string;
+  caseNo: string;
+  caseYear: number;
+  cnrNumber: string;
+  parties: string;
+  petitionerCounsel: string;
+  respondentCounsel: string;
+  matchedKeyword: string;
+  matchScore: number;
+  status: "UNCLAIMED" | "ACCEPTED" | "IGNORED";
+}
 
+export class MockJudicialService {
+  /**
+   * Simulates High Court CIS / NAPIX verify endpoint
+   */
   static async verifyCNR(cnrNumber: string): Promise<MockCNRDetails> {
-    const isLucknow = cnrNumber.toUpperCase().includes("LKO") || cnrNumber.endsWith("2");
+    const cnr = cnrNumber.toUpperCase().trim();
+    const isLucknow =
+      cnr.includes("LKO") || cnr.startsWith("UPLC") || cnr.endsWith("2");
     const currentYear = new Date().getFullYear();
+
+    // Default next hearing date 10 days in future
     const futureDate = new Date();
-    futureDate.setDate(futureDate.getDate() + 7);
+    futureDate.setDate(futureDate.getDate() + 10);
 
     return {
-      cnrNumber: cnrNumber.toUpperCase(),
+      cnrNumber: cnr,
       court: isLucknow
-        ? "High Court of Judicature at Allahabad (Lucknow Bench)"
+        ? "High Court Allahabad (Lucknow Bench)"
         : "High Court of Judicature at Allahabad",
       courtCode: isLucknow ? "HC-LKO" : "HC-ALD",
       caseType: "WRIT-A",
@@ -36,8 +59,10 @@ export class MockJudicialService {
       caseYear: currentYear,
       benchLocation: isLucknow ? "Lucknow" : "Allahabad",
       courtRoomNo: `Court No. ${Math.floor(1 + Math.random() * 35)}`,
-      coramBench: "Hon'ble Justice Vivek Chaudhary & Hon'ble Justice Manish Kumar",
-      leadPetitioner: "Abhay Gupta & 4 Others",
+      coramBench: isLucknow
+        ? "Hon'ble Justice Vivek Chaudhary & Hon'ble Justice Manish Kumar"
+        : "Hon'ble Justice Saurabh Shyam Shamshery",
+      leadPetitioner: "Abhay Gupta & Ors.",
       respondentString: "State of U.P. thru ACS Home & Chairman UPPRPB",
       petitionerAdvocate: "R.K. Ojha (Senior Advocate)",
       stateCounsel: "Chief Standing Counsel (CSC)",
@@ -46,56 +71,71 @@ export class MockJudicialService {
     };
   }
 
+  /**
+   * Pre-registration advance notice lookup
+   */
   static async lookupNotice(noticeNumber: string) {
+    const currentYear = new Date().getFullYear();
     return {
-      noticeNumber,
+      noticeNumber: noticeNumber.trim(),
       serviceDate: new Date(),
       leadPetitioner: "Sandeep Kumar & Ors.",
       advocateName: "P.K. Upadhyay (Advocate Roll: A/P0452/2012)",
-      targetedDrive: "Constable Civil Police 2023-24",
+      targetedDrive: "Constable Civil Police & PAC Exam 2023-24",
       defectStatus: "CLEARED",
       allocatedCaseType: "WRIT-A",
-      allocatedCaseNo: "5024",
-      allocatedYear: new Date().getFullYear(),
+      allocatedCaseNo: String(Math.floor(1000 + Math.random() * 9000)),
+      allocatedYear: currentYear,
     };
   }
 
-  static async getDailyCauseListFeed(bench: "Allahabad" | "Lucknow") {
+  /**
+   * Daily cause list scraper feed for Screen 2.4 Inward Discovery Desk
+   */
+  static async getDailyCauseListFeed(
+    bench: "Allahabad" | "Lucknow"
+  ): Promise<MockCauseListFeedItem[]> {
     const today = new Date().toISOString().split("T")[0];
+    const isLucknow = bench === "Lucknow";
+
     return [
       {
-        court: `High Court ${bench}`,
+        court: isLucknow
+          ? "High Court Allahabad (Lucknow Bench)"
+          : "High Court of Judicature at Allahabad",
         bench,
         causeListDate: today,
-        courtHall: "Court No. 14",
+        courtHall: isLucknow ? "Court No. 18" : "Court No. 14",
         itemNo: "28",
-        caseType: "WRIT-A",
+        caseType: isLucknow ? "SS-WRIT" : "WRIT-A",
         caseNo: "4012",
         caseYear: 2026,
-        cnrNumber: bench === "Lucknow" ? "UPHC020040122026" : "UPHC010040122026",
+        cnrNumber: isLucknow ? "UPLC010040122026" : "UPHC010040122026",
         parties: "Abhay Gupta vs State of U.P. & Chairman UPPRPB",
         petitionerCounsel: "Amit Kumar Tiwari",
-        respondentCounsel: "C.S.C.",
+        respondentCounsel: "Chief Standing Counsel",
         matchedKeyword: "Chairman UPPRPB",
         matchScore: 96,
-        status: "UNCLAIMED",
+        status: "UNCLAIMED" as const,
       },
       {
-        court: `High Court ${bench}`,
+        court: isLucknow
+          ? "High Court Allahabad (Lucknow Bench)"
+          : "High Court of Judicature at Allahabad",
         bench,
         causeListDate: today,
-        courtHall: "Court No. 04",
+        courtHall: isLucknow ? "Court No. 21" : "Court No. 04",
         itemNo: "12",
-        caseType: "CONT",
+        caseType: isLucknow ? "CONT-LKO" : "CONT-APP",
         caseNo: "1102",
         caseYear: 2026,
-        cnrNumber: bench === "Lucknow" ? "UPHC020011022026" : "UPHC010011022026",
+        cnrNumber: isLucknow ? "UPLC010011022026" : "UPHC010011022026",
         parties: "A. Qureshi vs Chairman Police Bharti Board",
         petitionerCounsel: "Vinod Kumar",
         respondentCounsel: "Standing Counsel",
         matchedKeyword: "Police Bharti Board",
         matchScore: 92,
-        status: "UNCLAIMED",
+        status: "UNCLAIMED" as const,
       },
     ];
   }

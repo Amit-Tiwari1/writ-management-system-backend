@@ -1,13 +1,26 @@
 import { Request, Response } from "express";
+import { Types } from "mongoose";
 import { CaseDocument } from "../models/DocumentDMS";
 import { Case } from "../models/Case";
 import { StorageService } from "../services/storageService";
 import { AuthRequest } from "../middlewares/authMiddleware";
+import { logAuditEvent } from "../utils/auditLogger";
+import { FolderCategoryType } from "../types/dms.types";
 
+const getParam = (param: string | string[] | undefined): string => {
+  if (Array.isArray(param)) return param[0];
+  return param || "";
+};
+
+/**
+ * 3.0 Document DMS & Tree — Fetch Categorized Dossier Folders
+ */
 export const getCaseDocuments = async (req: Request, res: Response) => {
   try {
-    const { caseId } = req.params;
-    const documents = await CaseDocument.find({ caseId }).sort({ createdAt: -1 }).lean();
+    const caseId = getParam(req.params.caseId);
+    const documents = await CaseDocument.find({ caseId })
+      .sort({ createdAt: -1 })
+      .lean();
 
     const structuredFolders = {
       "01_petitions": documents.filter((d) => d.folderCategory === "01_petitions"),
@@ -27,9 +40,12 @@ export const getCaseDocuments = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Upload New Case Document to Cloudinary & Index in DMS Ledger
+ */
 export const uploadCaseDocument = async (req: AuthRequest, res: Response) => {
   try {
-    const { caseId } = req.params;
+    const caseId = getParam(req.params.caseId);
     const { folderCategory, ocrTextContent } = req.body;
     const file = (req as any).file as Express.Multer.File;
 
@@ -42,7 +58,18 @@ export const uploadCaseDocument = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: "Associated Case not found." });
     }
 
-    const folderSlug = (folderCategory || "01_petitions").trim();
+    const validCategories: FolderCategoryType[] = [
+      "01_petitions",
+      "02_notings",
+      "03_counter_affidavits",
+      "04_orders",
+      "05_compliance_proofs",
+    ];
+
+    const folderSlug: FolderCategoryType = validCategories.includes(folderCategory as FolderCategoryType)
+      ? (folderCategory as FolderCategoryType)
+      : "01_petitions";
+
     const caseSlug = caseDoc.fileNo.replace(/\//g, "_");
     const targetFolder = `cases/${caseSlug}/${folderSlug}`;
 
@@ -54,7 +81,7 @@ export const uploadCaseDocument = async (req: AuthRequest, res: Response) => {
     );
 
     const newDoc = await CaseDocument.create({
-      caseId,
+      caseId: caseDoc._id,
       folderCategory: folderSlug,
       fileName: file.originalname,
       originalName: file.originalname,
@@ -62,16 +89,27 @@ export const uploadCaseDocument = async (req: AuthRequest, res: Response) => {
       mimeType: storageRes.mimeType,
       s3Key: storageRes.publicId,
       s3Bucket: storageRes.secureUrl,
+      documentUrl: storageRes.secureUrl,
       sha256Hash: storageRes.sha256Hash,
       version: "v1.0",
       isVerifiedCopy: true,
-      uploadedBy: req.user?.username || "Legal Officer",
+      uploadedBy: req.user?.name || req.user?.username || "Legal Officer",
+      uploadedByUserId: req.user?.id ? new Types.ObjectId(req.user.id) : undefined,
       ocrTextContent: ocrTextContent || "",
     });
 
+    await logAuditEvent(
+      req,
+      "CASE_DOCUMENT_UPLOADED" as any,
+      "DMS",
+      newDoc._id.toString(),
+      { fileNo: caseDoc.fileNo, fileName: file.originalname, folder: folderSlug },
+      "INFO"
+    );
+
     return res.status(201).json({
       success: true,
-      message: "Document stored in Cloudinary & audited in DMS ledger.",
+      message: "Document stored in Cloud Storage & audited in DMS ledger.",
       document: newDoc,
     });
   } catch (err: any) {
@@ -79,9 +117,12 @@ export const uploadCaseDocument = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * Replace / Version Upgrade Document (v1.0 -> v1.1)
+ */
 export const replaceCaseDocument = async (req: AuthRequest, res: Response) => {
   try {
-    const { docId } = req.params;
+    const docId = getParam(req.params.docId);
     const file = (req as any).file as Express.Multer.File;
 
     if (!file) {
@@ -115,10 +156,21 @@ export const replaceCaseDocument = async (req: AuthRequest, res: Response) => {
     existingDoc.mimeType = storageRes.mimeType;
     existingDoc.s3Key = storageRes.publicId;
     existingDoc.s3Bucket = storageRes.secureUrl;
+    existingDoc.documentUrl = storageRes.secureUrl;
     existingDoc.sha256Hash = storageRes.sha256Hash;
     existingDoc.version = newVersion;
-    existingDoc.uploadedBy = req.user?.username || "Legal Officer";
+    existingDoc.uploadedBy = req.user?.name || req.user?.username || "Legal Officer";
+    existingDoc.uploadedByUserId = req.user?.id ? new Types.ObjectId(req.user.id) : existingDoc.uploadedByUserId;
     await existingDoc.save();
+
+    await logAuditEvent(
+      req,
+      "CASE_DOCUMENT_VERSION_UPGRADED" as any,
+      "DMS",
+      existingDoc._id.toString(),
+      { newVersion, fileName: file.originalname },
+      "INFO"
+    );
 
     return res.status(200).json({
       success: true,
@@ -130,9 +182,12 @@ export const replaceCaseDocument = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * Delete / Purge Case Document
+ */
 export const deleteCaseDocument = async (req: AuthRequest, res: Response) => {
   try {
-    const { docId } = req.params;
+    const docId = getParam(req.params.docId);
     const doc = await CaseDocument.findById(docId);
     if (!doc) return res.status(404).json({ success: false, message: "Document not found." });
 
@@ -146,6 +201,15 @@ export const deleteCaseDocument = async (req: AuthRequest, res: Response) => {
     await StorageService.deleteFile(doc.s3Key, doc.mimeType.includes("pdf"));
     await CaseDocument.findByIdAndDelete(docId);
 
+    await logAuditEvent(
+      req,
+      "CASE_DOCUMENT_DELETED" as any,
+      "DMS",
+      docId,
+      { fileName: doc.fileName, folder: doc.folderCategory },
+      "WARNING"
+    );
+
     return res.status(200).json({
       success: true,
       message: "Document purged successfully from storage ledger.",
@@ -155,9 +219,13 @@ export const deleteCaseDocument = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * View Document Stream Metadata
+ */
 export const viewDocumentStream = async (req: Request, res: Response) => {
   try {
-    const doc = await CaseDocument.findById(req.params.docId);
+    const docId = getParam(req.params.docId);
+    const doc = await CaseDocument.findById(docId);
     if (!doc) return res.status(404).json({ success: false, message: "Document not found." });
 
     return res.status(200).json({
@@ -165,26 +233,32 @@ export const viewDocumentStream = async (req: Request, res: Response) => {
       documentName: doc.fileName,
       mimeType: doc.mimeType,
       sha256Hash: doc.sha256Hash,
-      viewUrl: doc.s3Bucket,
+      viewUrl: doc.documentUrl || doc.s3Bucket,
+      version: doc.version,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
 
+/**
+ * Add Marginal Annotation / Comment to PDF Page
+ */
 export const addAnnotation = async (req: AuthRequest, res: Response) => {
   try {
+    const docId = getParam(req.params.docId);
     const { pageNumber, selectedText, comment } = req.body;
-    const doc = await CaseDocument.findById(req.params.docId);
+
+    const doc = await CaseDocument.findById(docId);
     if (!doc) return res.status(404).json({ success: false, message: "Document not found." });
 
     doc.annotations.push({
       pageNumber: Number(pageNumber),
       selectedText: selectedText || "",
       comment,
-      authorName: req.user?.username || "Legal Officer",
-      authorDesignation: req.user?.role || "Staff Officer",
-    } as any);
+      authorName: req.user?.name || req.user?.username || "Legal Officer",
+      authorDesignation: req.user?.designation || req.user?.role || "Staff Officer",
+    });
 
     await doc.save();
     return res.status(201).json({
@@ -197,9 +271,12 @@ export const addAnnotation = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * Search Documents by OCR Content & Filename
+ */
 export const searchDocumentsOCR = async (req: Request, res: Response) => {
   try {
-    const { caseId } = req.params;
+    const caseId = getParam(req.params.caseId);
     const { q } = req.query;
 
     if (!q) {
@@ -209,10 +286,10 @@ export const searchDocumentsOCR = async (req: Request, res: Response) => {
     const matches = await CaseDocument.find({
       caseId,
       $or: [
-        { fileName: { $regex: String(q),$options: "i" } },
-        { ocrTextContent: { $regex: String(q),$options: "i" } },
+        { fileName: { $regex: String(q), $options: "i" } },
+        { ocrTextContent: { $regex: String(q), $options: "i" } },
       ],
-    }).select("fileName folderCategory sha256Hash version createdAt");
+    }).select("fileName folderCategory sha256Hash version documentUrl createdAt");
 
     return res.status(200).json({
       success: true,

@@ -10,12 +10,17 @@ import { Case } from "../models/Case";
 import { logAuditEvent } from "../utils/auditLogger";
 import { NotificationService } from "../services/notificationService";
 
+const parseQueryParam = (val: any): string | undefined => {
+  if (Array.isArray(val)) return String(val[0]);
+  if (val !== undefined && val !== null) return String(val);
+  return undefined;
+};
 
 export const getUserFormDropdowns = async (req: Request, res: Response) => {
   try {
     const [ranks, designations, departments, roles] = await Promise.all([
       Rank.find().select("rankName shortCode").sort({ rankName: 1 }).lean(),
-      Designation.find().select("title authorityLevel").sort({ title: 1 }).lean(),
+      Designation.find().select("title authorityLevel defaultRole").sort({ title: 1 }).lean(),
       Department.find().select("unitName unitCode").sort({ unitName: 1 }).lean(),
       Role.find().select("roleName roleCode").sort({ roleName: 1 }).lean(),
     ]);
@@ -37,29 +42,53 @@ export const getUserFormDropdowns = async (req: Request, res: Response) => {
 
 export const getUsersList = async (req: Request, res: Response) => {
   try {
-    const { search, role, status } = req.query;
+    const search = parseQueryParam(req.query.search);
+    const role = parseQueryParam(req.query.role);
+    const status = parseQueryParam(req.query.status);
+    const designation = parseQueryParam(req.query.designation);
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
+    const skip = (page - 1) * limit;
+
     const query: any = {};
 
     if (search) {
-      const reg = new RegExp(String(search).trim(), "i");
+      const reg = new RegExp(search.trim(), "i");
       query.$or = [{ name: reg }, { username: reg }, { designation: reg }, { mobile: reg }, { email: reg }];
     }
-    if (role && role !== "All Roles") {
-      query.role = String(role);
+    if (role && role !== "All Roles" && role !== "ALL") {
+      query.role = role;
     }
-    if (status) {
-      query.status = String(status);
+    if (designation && designation !== "ALL") {
+      query.designation = designation;
+    }
+    if (status && status !== "ALL") {
+      query.status = status;
     }
 
-    const users = await User.find(query).sort({ createdAt: -1 }).select("-passwordHash").lean();
-    const activeCount = await User.countDocuments({ status: "ACTIVE" });
+    const [users, totalCount, activeCount] = await Promise.all([
+      User.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select("-passwordHash")
+        .lean(),
+      User.countDocuments(query),
+      User.countDocuments({ status: "ACTIVE" }),
+    ]);
 
     return res.status(200).json({
       success: true,
       activeStaffCount: activeCount,
-      totalCount: users.length,
+      totalCount,
+      pagination: {
+        page,
+        limit,
+        pages: Math.ceil(totalCount / limit) || 1,
+      },
       data: users.map((u, idx) => ({
-        sNo: idx + 1,
+        sNo: skip + idx + 1,
         _id: u._id,
         officerName: u.name,
         designationAndWing: {
@@ -105,7 +134,7 @@ export const createStaffUser = async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({
-      name,
+      name: name.trim(),
       username: username.toLowerCase().trim(),
       passwordHash,
       rank: rank || "DySP",
@@ -118,8 +147,8 @@ export const createStaffUser = async (req: Request, res: Response) => {
       courtBench: courtBench || "BOTH",
       status: "ACTIVE",
     });
+
     if (email && email.includes("@")) {
-      console.log(`[Admin] Triggering welcome email to: ${email}`);
       NotificationService.sendWelcomeCredentialsEmail({
         toEmail: email.trim(),
         officerName: user.name,
@@ -130,7 +159,6 @@ export const createStaffUser = async (req: Request, res: Response) => {
         roleName: roleDoc.roleName,
       }).catch((err) => console.error("[User Welcome Mail Error]:", err));
     }
-    console.log(`[Admin] Staff user created: ${user.username} (${user.role})`);
 
     await logAuditEvent(
       req,
@@ -169,7 +197,7 @@ export const updateStaffUser = async (req: Request, res: Response) => {
       }
     }
 
-    if (name) user.name = name;
+    if (name) user.name = name.trim();
     if (rank) user.rank = rank;
     if (designation) user.designation = designation;
     if (section) user.section = section;
@@ -199,10 +227,17 @@ export const updateStaffUser = async (req: Request, res: Response) => {
   }
 };
 
-
 export const getRolesWithMetrics = async (req: Request, res: Response) => {
   try {
-    const roles = await Role.find().sort({ createdAt: 1 }).lean();
+    const search = parseQueryParam(req.query.search);
+    const filter: any = {};
+
+    if (search) {
+      const reg = new RegExp(search.trim(), "i");
+      filter.$or = [{ roleName: reg }, { roleCode: reg }, { description: reg }];
+    }
+
+    const roles = await Role.find(filter).sort({ createdAt: 1 }).lean();
 
     const roleMetrics = await Promise.all(
       roles.map(async (r) => {
@@ -246,7 +281,7 @@ export const createRoleWithPermissions = async (req: Request, res: Response) => 
     const newRole = await Role.create({
       roleName: roleName.trim(),
       roleCode: roleCode.toUpperCase().trim(),
-      description: description || "",
+      description: description ? description.trim() : "",
       isSystemDefault: false,
     });
 
@@ -333,8 +368,8 @@ export const updateRolePermissionMatrix = async (req: Request, res: Response) =>
     const role = await Role.findById(roleId);
     if (!role) return res.status(404).json({ success: false, message: "Role not found." });
 
-    if (description) {
-      role.description = description;
+    if (description !== undefined) {
+      role.description = description.trim();
       await role.save();
     }
 
@@ -372,7 +407,6 @@ export const updateRolePermissionMatrix = async (req: Request, res: Response) =>
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
 
 export const getAuditLogs = async (req: Request, res: Response) => {
   try {
@@ -421,7 +455,6 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
 
 export const getECourtsSyncHealth = async (req: Request, res: Response) => {
   try {

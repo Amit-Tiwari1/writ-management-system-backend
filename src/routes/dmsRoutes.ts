@@ -13,6 +13,7 @@ import {
 
 const router = Router();
 router.use(authenticateToken);
+
 router.get("/cases/:caseId/documents", getCaseDocuments);
 router.post("/cases/:caseId/documents/upload", uploadSingle("file", 25), uploadCaseDocument);
 router.put("/cases/documents/:docId/replace", uploadSingle("file", 25), replaceCaseDocument);

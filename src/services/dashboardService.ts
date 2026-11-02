@@ -1,11 +1,9 @@
-import mongoose from "mongoose";
 import { Case } from "../models/Case";
-import { ComplianceRecord } from "../models/ComplianceRisk";
 import { Court, CaseType } from "../models/Masters";
 import { User } from "../models/User";
 
 export class DashboardService {
-  // 1. Top 4 High-Level KPI Cards
+  // 1. Top 4 High-Level KPI Cards (Pure Real Database Counts - Zero Fallbacks)
   static async getTopKpis() {
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -18,48 +16,49 @@ export class DashboardService {
       pwcAwaited,
       toBeClosed,
       totalDisposed,
-      totalContempt,
     ] = await Promise.all([
       Case.countDocuments({ judicialStatus: { $ne: "DISPOSED" } }),
       Case.countDocuments({ createdAt: { $gte: startOfMonth } }),
       Case.countDocuments({
         judicialStatus: { $in: ["ACTIVE", "STAY_IN_FORCE", "CONTEMPT_NOTICE"] },
-        stage: { $regex: /listed|hearing|court|orders/i },
+        stage: { $regex: /listed|hearing|court|orders|notice/i },
       }),
       Case.countDocuments({
         judicialStatus: { $ne: "DISPOSED" },
-        "internalHold.location": { $regex: /legal|board|wing|cell/i },
+        "internalHold.location": { $regex: /legal|board|wing|cell|secretary|oic|pairokar/i },
       }),
       Case.countDocuments({
-        judicialStatus: "PENDING_PWC",
+        $or: [{ judicialStatus: "PENDING_PWC" }, { stage: { $regex: /pwc|para-wise/i } }],
       }),
       Case.countDocuments({
-        stage: { $regex: /to be closed|disposed/i },
+        stage: { $regex: /to be closed|closed/i },
         judicialStatus: { $ne: "DISPOSED" },
       }),
-      Case.countDocuments({ judicialStatus: "DISPOSED" }),
-      ComplianceRecord.countDocuments({ recordType: "CONTEMPT" }),
+      Case.countDocuments({
+        $or: [{ judicialStatus: "DISPOSED" }, { stage: { $regex: /disposed off/i } }],
+      }),
     ]);
 
+    const previousCount = Math.max(0, totalActive - filedThisMonth);
     const complianceRate =
       totalActive + totalDisposed > 0
         ? Number(((totalDisposed / (totalActive + totalDisposed)) * 100).toFixed(1))
-        : 94.2;
+        : 0.0;
 
     return {
       activeWrits: {
-        total: totalActive || 553,
-        filedThisMonth: filedThisMonth || 127,
-        previous: Math.max(0, (totalActive || 553) - (filedThisMonth || 127)),
+        total: totalActive,
+        filedThisMonth,
+        previous: previousCount,
       },
       pendingInCourt: {
-        total: pendingInCourt || 293,
-        description: "HC Allahabad & Lucknow Bench Listings",
+        total: pendingInCourt,
+        description: "HC Allahabad & Lucknow Bench Active Matters",
       },
       actionInBoard: {
-        total: actionInBoard || 88,
-        pwcAwaited: pwcAwaited || 49,
-        toBeClosed: toBeClosed || 172,
+        total: actionInBoard,
+        pwcAwaited,
+        toBeClosed,
       },
       complianceRate: {
         rate: complianceRate,
@@ -68,8 +67,8 @@ export class DashboardService {
     };
   }
 
-  // 2. Multi-Dimensional Writ Classification Matrix
-  static async getClassificationMatrix(filters: {
+  // 2. Multi-Dimensional Writ Classification Matrix (Filters & Real Data Only)
+ static async getClassificationMatrix(filters: {
     wing?: string;
     courtCode?: string;
     year?: number;
@@ -80,25 +79,56 @@ export class DashboardService {
       matchQuery.sectionWing = filters.wing;
     }
     if (filters.courtCode && filters.courtCode !== "ALL") {
-      matchQuery.courtCode = filters.courtCode;
+      matchQuery.$or = [{ courtCode: filters.courtCode }, { benchLocation: filters.courtCode }];
     }
     if (filters.year) {
       matchQuery.caseYear = Number(filters.year);
     }
 
-    // Default Case Types from DB or fallback
+    // 7.5 Master se official case types pull karein
     const caseTypes = await CaseType.find().select("shortName caseTypeName").lean();
-    const typeList =
+    
+    // Agar master types hain toh unko prioritize karein
+    const typeItems =
       caseTypes.length > 0
-        ? caseTypes.map((c) => c.shortName || c.caseTypeName)
-        : ["WRIT-A", "CONT", "SPL-AD", "SLP-CIVIL"];
+        ? caseTypes
+        : [
+            { shortName: "HC-ALD", caseTypeName: "WRIT - A (Service Single Bench)" },
+            { shortName: "SPL-A", caseTypeName: "SPECIAL APPEAL" },
+            { shortName: "CONT-APP", caseTypeName: "CONTEMPT APPLICATION" },
+            { shortName: "SS-WRIT", caseTypeName: "SERVICE SINGLE (Writ Petition)" },
+            { shortName: "CONT-LKO", caseTypeName: "CONTEMPT APPLICATION (Lucknow)" },
+            { shortName: "CLAIM-PET", caseTypeName: "CLAIM PETITION" },
+          ];
 
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
     const matrixRows = await Promise.all(
-      typeList.map(async (cType) => {
-        const typeQuery = { ...matchQuery, caseType: { $regex: new RegExp(`^${cType}`, "i") } };
+      typeItems.map(async (cItem: any) => {
+        const sName = cItem.shortName || "";
+        const fullName = cItem.caseTypeName || "";
+
+        // Build flexible regex jo 'WRIT-A', 'HC-ALD', ya 'WRIT - A' sabko accurately match kare
+        const matchingPatterns: any[] = [];
+        if (sName) matchingPatterns.push({ caseType: new RegExp(`^${sName}$`, "i") });
+        if (fullName) matchingPatterns.push({ caseType: new RegExp(fullName.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"), "i") });
+
+        // High Court Allahabad Service Single bench standard alias
+        if (sName === "HC-ALD" || fullName.includes("WRIT - A") || fullName.includes("WRIT-A")) {
+          matchingPatterns.push({ caseType: /writ[- ]?a/i });
+        }
+        if (sName.includes("CONT") || fullName.includes("CONTEMPT")) {
+          matchingPatterns.push({ caseType: /cont/i });
+        }
+        if (sName.includes("SPL") || fullName.includes("SPECIAL APPEAL")) {
+          matchingPatterns.push({ caseType: /spl/i });
+        }
+
+        const typeQuery = {
+          ...matchQuery,
+          $or: matchingPatterns,
+        };
 
         const [
           total,
@@ -114,61 +144,57 @@ export class DashboardService {
           Case.countDocuments({ ...typeQuery, createdAt: { $gte: startOfMonth } }),
           Case.countDocuments({
             ...typeQuery,
-            "internalHold.location": { $regex: /board|legal|wing/i },
+            "internalHold.location": { $regex: /board|legal|wing|pairokar|secretary|assistant|oic/i },
           }),
           Case.countDocuments({
             ...typeQuery,
-            stage: { $regex: /court|listed|hearing/i },
+            stage: { $regex: /court|listed|hearing|notice/i },
           }),
-          Case.countDocuments({ ...typeQuery, judicialStatus: "PENDING_PWC" }),
+          Case.countDocuments({
+            ...typeQuery,
+            $or: [{ judicialStatus: "PENDING_PWC" }, { stage: { $regex: /pwc|comments/i } }],
+          }),
           Case.countDocuments({ ...typeQuery, stage: { $regex: /allowed/i } }),
-          Case.countDocuments({ ...typeQuery, judicialStatus: "DISPOSED" }),
+          Case.countDocuments({
+            ...typeQuery,
+            $or: [{ judicialStatus: "DISPOSED" }, { stage: { $regex: /disposed/i } }],
+          }),
           Case.countDocuments({ ...typeQuery, stage: { $regex: /to be closed/i } }),
         ]);
 
         const previous = Math.max(0, total - currentMonth);
 
         return {
-          caseType: cType,
-          label:
-            cType === "WRIT-A"
-              ? "WRIT-A (Service & Recruitment)"
-              : cType === "CONT"
-              ? "CONT (Civil Contempt)"
-              : cType === "SPL-AD"
-              ? "SPL-AD (Special Appeal DB)"
-              : cType === "SLP-CIVIL"
-              ? "SLP-CIVIL (Supreme Court)"
-              : cType,
+          caseType: sName || fullName,
+          label: sName || fullName,
           atAGlance: {
-            previous: previous || 10,
-            inCurrentMonth: currentMonth || 2,
-            total: total || 12,
+            previous,
+            inCurrentMonth: currentMonth,
+            total,
           },
           closed: {
-            closed: disposedOff || 0,
-            toBeClosed: toBeClosed || 4,
+            closed: disposedOff,
+            toBeClosed,
           },
           pending: {
-            inBoard: inBoard || 3,
+            inBoard,
             inUnits: 0,
-            inCourt: inCourt || 9,
+            inCourt,
           },
           dismissedWithdrawn: {
             dismissed: 0,
             withdrawn: 0,
           },
           representationPending: {
-            instructionsPwc: pwcInstructions || 2,
-            allowedOff: allowedOff || 0,
-            disposedOff: disposedOff || 1,
-            otherPending: Math.max(0, (inBoard || 3) - (pwcInstructions || 2)),
+            instructionsPwc: pwcInstructions,
+            allowedOff,
+            disposedOff,
+            otherPending: Math.max(0, inBoard - pwcInstructions),
           },
         };
       })
     );
 
-    // Calculate Summary Totals
     const summary = matrixRows.reduce(
       (acc, r) => {
         acc.previous += r.atAGlance.previous;
@@ -207,17 +233,23 @@ export class DashboardService {
     };
   }
 
-  // 3. Judicial Forum Distribution (6.5 Court Master counts)
+  // 3. Judicial Forum Distribution (Master Synced)
   static async getCourtDistribution() {
     const courts = await Court.find().select("courtName shortCode location").lean();
 
     const distribution = await Promise.all(
       courts.map(async (c) => {
         const count = await Case.countDocuments({
-          $or: [{ courtId: c._id }, { courtCode: c.shortCode }, { court: c.courtName }],
+          $or: [
+            { courtId: c._id },
+            { courtCode: c.shortCode },
+            { court: new RegExp(c.courtName, "i") },
+            { benchLocation: new RegExp(c.location, "i") },
+          ],
+          judicialStatus: { $ne: "DISPOSED" },
         });
         return {
-          courtId: c._id,
+          courtId: c._id.toString(),
           courtName: c.courtName,
           shortCode: c.shortCode,
           location: c.location,
@@ -243,15 +275,21 @@ export class DashboardService {
 
     const workload = await Promise.all(
       officers.map(async (off, idx) => {
-        const oicRegex = new RegExp(off.name.trim(), "i");
+        const oicRegex = new RegExp(`^${off.name.trim()}$|${off.name.trim()}`, "i");
 
         const [total, actionDue, commentsNotSent, caNotFiled, toBeClosed] = await Promise.all([
-          Case.countDocuments({ assignedOIC: oicRegex, judicialStatus: { $ne: "DISPOSED" } }),
+          Case.countDocuments({
+            $or: [{ assignedOIC: oicRegex }, { "internalHold.location": oicRegex }],
+            judicialStatus: { $ne: "DISPOSED" },
+          }),
+          Case.countDocuments({
+            "internalHold.location": oicRegex,
+            judicialStatus: { $ne: "DISPOSED" },
+          }),
           Case.countDocuments({
             assignedOIC: oicRegex,
-            "internalHold.location": { $regex: off.name, $options: "i" },
+            $or: [{ judicialStatus: "PENDING_PWC" }, { stage: { $regex: /pwc|comments/i } }],
           }),
-          Case.countDocuments({ assignedOIC: oicRegex, judicialStatus: "PENDING_PWC" }),
           Case.countDocuments({
             assignedOIC: oicRegex,
             hasActiveStay: true,
@@ -266,21 +304,21 @@ export class DashboardService {
 
         return {
           sNo: idx + 1,
-          officerId: off._id,
+          officerId: off._id.toString(),
           officerName: off.name,
-          designation: off.designation,
-          sectionWing: off.section,
-          total: total || 0,
-          actionDue: actionDue || 0,
-          commentsNotSent: commentsNotSent || 0,
-          caNotFiled: caNotFiled || 0,
-          toBeClosed: toBeClosed || 0,
+          designation: off.designation || off.role,
+          sectionWing: off.section || "Legal Cell",
+          total,
+          actionDue,
+          commentsNotSent,
+          caNotFiled,
+          toBeClosed,
           status: statusColor,
         };
       })
     );
 
-    return workload.filter((w) => w.total > 0 || w.sectionWing.includes("Legal"));
+    return workload.filter((w) => w.total > 0 || w.sectionWing.includes("Legal") || w.designation.includes("SP"));
   }
 
   // 5. Monthly Hearing Calendar Heatmap
@@ -294,7 +332,7 @@ export class DashboardService {
     const hearings = await Case.aggregate([
       {
         $match: {
-          ndoh: { $gte: startOfMonth,$lte: endOfMonth },
+          ndoh: { $gte: startOfMonth, $lte: endOfMonth },
         },
       },
       {
@@ -303,7 +341,7 @@ export class DashboardService {
           count: { $sum: 1 },
           hasStayOrContempt: {
             $sum: {
-              $cond: [{$or: ["$hasActiveStay", "$isContemptNotice"] }, 1, 0],
+              $cond: [{ $or: ["$hasActiveStay", "$isContemptNotice"] }, 1, 0],
             },
           },
         },
@@ -314,11 +352,31 @@ export class DashboardService {
     return {
       year: curYear,
       month: curMonth,
-      days: hearings.map((h) => ({
-        day: h._id,
-        count: h.count,
-        isHighRisk: h.hasStayOrContempt > 0,
-      })),
+      days: hearings.map((h) => {
+        const dateStr = `${curYear}-${String(curMonth + 1).padStart(2, "0")}-${String(h._id).padStart(2, "0")}`;
+        return {
+          day: h._id,
+          dateStr,
+          count: h.count,
+          isHighRisk: h.hasStayOrContempt > 0,
+        };
+      }),
     };
+  }
+
+  // 6. Get Cases Scheduled on a Specific Hearing Date (Calendar Click Drill-down)
+  static async getCasesByHearingDate(dateString: string) {
+    const targetDate = new Date(dateString);
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+
+    const cases = await Case.find({
+      ndoh: { $gte: startOfDay, $lte: endOfDay },
+    })
+      .select("fileNo writNumber cnrNumber court benchLocation courtRoomNo leadPetitioner petitionerAdvocate assignedOIC stage hasActiveStay isContemptNotice")
+      .sort({ courtRoomNo: 1, fileNo: 1 })
+      .lean();
+
+    return cases;
   }
 }

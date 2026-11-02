@@ -1,16 +1,10 @@
-import mongoose, { Document, Schema } from "mongoose";
+import mongoose, { Schema } from "mongoose";
+import {
+  IDigitalSignature,
+  INotingMinute,
+} from "../types/noting.types";
 
-// Signature Seal Sub-document
-export interface IDigitalSignature {
-  signerName: string;
-  signerDesignation: string;
-  signerSection: string;
-  signedAt: Date;
-  certificateSerialNumber: string;
-  issuerAuthority: string;
-  sha256Seal: string;
-  isValid: boolean;
-}
+export type { IDigitalSignature, INotingMinute };
 
 const DigitalSignatureSchema = new Schema<IDigitalSignature>(
   {
@@ -19,34 +13,12 @@ const DigitalSignatureSchema = new Schema<IDigitalSignature>(
     signerSection: { type: String, required: true },
     signedAt: { type: Date, default: Date.now },
     certificateSerialNumber: { type: String, required: true },
-    issuerAuthority: { type: String, default: "eMudhra Sub-CA Class 3" },
+    issuerAuthority: { type: String, default: "eMudhra Sub-CA Class 3 Institutional Signature" },
     sha256Seal: { type: String, required: true },
     isValid: { type: Boolean, default: true },
   },
   { _id: false }
 );
-
-// Primary Green Sheet Minute Document
-export interface INotingMinute extends Document {
-  caseId: mongoose.Types.ObjectId;
-  minuteNumber: number;
-  minuteTitle: string;
-  notingPurpose: "PWC / Legal Opinion" | "Direction to Section" | "Para-Wise Comments (PWC) Approval" | "File Movement" | "Other";
-  fontEncoding: "Unicode" | "Kruti Dev 14";
-  content: string;
-  authorId: mongoose.Types.ObjectId;
-  authorName: string;
-  authorDesignation: string;
-  status: "DRAFT" | "SIGNED_AND_FORWARDED";
-  forwardToUserId?: mongoose.Types.ObjectId;   // Targeted Recipient User
-  forwardedToOfficerName?: string;             // Historical Audit Snapshot
-  forwardedToDesignation?: string;             // Historical Audit Snapshot
-  turnaroundDueDate?: Date;
-  fileUrgency: "Routine" | "Urgent" | "High Priority (NDOH)";
-  signature?: IDigitalSignature;
-  createdAt: Date;
-  updatedAt: Date;
-}
 
 const NotingMinuteSchema = new Schema<INotingMinute>(
   {
@@ -55,7 +27,13 @@ const NotingMinuteSchema = new Schema<INotingMinute>(
     minuteTitle: { type: String, default: "" },
     notingPurpose: {
       type: String,
-      enum: ["PWC / Legal Opinion", "Direction to Section", "Para-Wise Comments (PWC) Approval", "File Movement", "Other"],
+      enum: [
+        "PWC / Legal Opinion",
+        "Direction to Section",
+        "Para-Wise Comments (PWC) Approval",
+        "File Movement",
+        "Other",
+      ],
       default: "PWC / Legal Opinion",
     },
     fontEncoding: {

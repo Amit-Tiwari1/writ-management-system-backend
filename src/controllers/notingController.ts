@@ -3,16 +3,12 @@ import crypto from "crypto";
 import { NotingMinute } from "../models/Noting";
 import { Case } from "../models/Case";
 import { User } from "../models/User";
-import { Notification } from "../models/Notification";
 import { AuthRequest } from "../middlewares/authMiddleware";
 import { NotificationService } from "../services/notificationService";
 import { CaseService } from "../services/caseService";
 import { renderPdfDocument } from "../utils/pdfTemplate";
 
-export const getForwardableOfficers = async (
-  req: AuthRequest,
-  res: Response,
-) => {
+export const getForwardableOfficers = async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user?.id;
     const query: any = { status: "ACTIVE" };
@@ -30,10 +26,10 @@ export const getForwardableOfficers = async (
       count: officers.length,
       data: officers.map((u) => ({
         userId: u._id,
-        displayName: `${u.name} — ${u.designation} (${u.section})`,
+        displayName: `${u.name} — ${u.designation || u.role} (${u.section || "HQ"})`,
         name: u.name,
-        designation: u.designation,
-        section: u.section,
+        designation: u.designation || u.role,
+        section: u.section || "HQ",
         role: u.role,
       })),
     });
@@ -50,9 +46,7 @@ export const getCaseNotings = async (req: Request, res: Response) => {
       .sort({ minuteNumber: 1 })
       .lean();
 
-    const signedCount = minutes.filter(
-      (m) => m.status === "SIGNED_AND_FORWARDED",
-    ).length;
+    const signedCount = minutes.filter((m) => m.status === "SIGNED_AND_FORWARDED").length;
     const currentDraft = minutes.find((m) => m.status === "DRAFT");
 
     return res.status(200).json({
@@ -87,16 +81,12 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
     } = req.body;
 
     if (!content) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Noting text cannot be empty." });
+      return res.status(400).json({ success: false, message: "Noting text cannot be empty." });
     }
 
     const caseItem = await Case.findById(targetCaseId);
     if (!caseItem) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Case file not found." });
+      return res.status(404).json({ success: false, message: "Case file docket not found." });
     }
 
     let targetOfficerName = "";
@@ -105,7 +95,7 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
       const targetUser = await User.findById(String(forwardToUserId));
       if (targetUser) {
         targetOfficerName = targetUser.name;
-        targetOfficerDesignation = targetUser.designation;
+        targetOfficerDesignation = targetUser.designation || targetUser.role;
       }
     }
 
@@ -122,24 +112,18 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
       if (fontEncoding) draft.fontEncoding = fontEncoding;
       if (forwardToUserId) draft.forwardToUserId = forwardToUserId;
       if (targetOfficerName) draft.forwardedToOfficerName = targetOfficerName;
-      if (targetOfficerDesignation)
-        draft.forwardedToDesignation = targetOfficerDesignation;
-      if (turnaroundDueDate)
-        draft.turnaroundDueDate = new Date(turnaroundDueDate);
+      if (targetOfficerDesignation) draft.forwardedToDesignation = targetOfficerDesignation;
+      if (turnaroundDueDate) draft.turnaroundDueDate = new Date(turnaroundDueDate);
       if (fileUrgency) draft.fileUrgency = fileUrgency;
       await draft.save();
     } else {
-      const highest = await NotingMinute.findOne({ caseId: targetCaseId }).sort({
-        minuteNumber: -1,
-      });
+      const highest = await NotingMinute.findOne({ caseId: targetCaseId }).sort({ minuteNumber: -1 });
       const nextMinuteNo = highest ? highest.minuteNumber + 1 : 1;
 
       draft = await NotingMinute.create({
         caseId: targetCaseId,
         minuteNumber: nextMinuteNo,
-        minuteTitle:
-          minuteTitle ||
-          `Minute #${nextMinuteNo} — ${notingPurpose || "PWC / Legal Opinion"}`,
+        minuteTitle: minuteTitle || `Minute #${nextMinuteNo} — ${notingPurpose || "PWC / Legal Opinion"}`,
         notingPurpose: notingPurpose || "PWC / Legal Opinion",
         fontEncoding: fontEncoding || "Unicode",
         content,
@@ -149,9 +133,7 @@ export const saveDraftNoting = async (req: AuthRequest, res: Response) => {
         forwardToUserId: forwardToUserId || undefined,
         forwardedToOfficerName: targetOfficerName,
         forwardedToDesignation: targetOfficerDesignation,
-        turnaroundDueDate: turnaroundDueDate
-          ? new Date(turnaroundDueDate)
-          : undefined,
+        turnaroundDueDate: turnaroundDueDate ? new Date(turnaroundDueDate) : undefined,
         fileUrgency: fileUrgency || "High Priority (NDOH)",
         status: "DRAFT",
       });
@@ -189,33 +171,25 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
 
     const caseItem = await Case.findById(targetCaseId);
     if (!caseItem) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Case file not found." });
+      return res.status(404).json({ success: false, message: "Case file not found." });
     }
 
     if (!forwardToUserId) {
       return res.status(400).json({
         success: false,
-        message:
-          "Recipient officer (forwardToUserId) is required to route the dak.",
+        message: "Recipient officer (forwardToUserId) is required to route the physical/digital dak.",
       });
     }
 
     const recipientUser = await User.findById(forwardToUserId);
     if (!recipientUser) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Target recipient officer not found.",
-        });
+      return res.status(404).json({ success: false, message: "Target recipient officer not found." });
     }
+
     if (String(forwardToUserId) === String(req.user?.id)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Protocol Rule: An officer cannot forward a legal file to their own desk.",
+        message: "Protocol Rule: An officer cannot forward a legal file to their own desk.",
       });
     }
 
@@ -231,9 +205,7 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
     }
 
     if (!minute) {
-      const highest = await NotingMinute.findOne({ caseId: targetCaseId }).sort({
-        minuteNumber: -1,
-      });
+      const highest = await NotingMinute.findOne({ caseId: targetCaseId }).sort({ minuteNumber: -1 });
       const nextMinuteNo = highest ? highest.minuteNumber + 1 : 1;
 
       minute = new NotingMinute({
@@ -241,8 +213,7 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
         minuteNumber: nextMinuteNo,
         authorId: req.user?.id,
         authorName: req.user?.name || req.user?.username || "Legal Officer",
-        authorDesignation:
-          req.user?.designation || "Sub Inspector (Legal Desk)",
+        authorDesignation: req.user?.designation || "Sub Inspector (Legal Desk)",
       });
     }
 
@@ -250,25 +221,19 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
     if (minuteTitle) minute.minuteTitle = minuteTitle;
     if (notingPurpose) minute.notingPurpose = notingPurpose;
     if (fontEncoding) minute.fontEncoding = fontEncoding;
-    if (turnaroundDueDate)
-      minute.turnaroundDueDate = new Date(turnaroundDueDate);
+    if (turnaroundDueDate) minute.turnaroundDueDate = new Date(turnaroundDueDate);
     if (fileUrgency) minute.fileUrgency = fileUrgency;
 
     const signTimestamp = new Date();
     const sealData = `${targetCaseId}_${minute.minuteNumber}_${minute.content}_${req.user?.id}_${signTimestamp.toISOString()}`;
-    const sha256Seal = crypto
-      .createHash("sha256")
-      .update(sealData)
-      .digest("hex");
+    const sha256Seal = crypto.createHash("sha256").update(sealData).digest("hex");
     const certSerial = `DSP-SIG-${Math.floor(10000 + Math.random() * 90000)}`;
 
-    minute.minuteTitle =
-      minute.minuteTitle ||
-      `Minute #${minute.minuteNumber} — ${minute.notingPurpose}`;
+    minute.minuteTitle = minute.minuteTitle || `Minute #${minute.minuteNumber} — ${minute.notingPurpose}`;
     minute.status = "SIGNED_AND_FORWARDED";
     minute.forwardToUserId = recipientUser._id;
     minute.forwardedToOfficerName = recipientUser.name;
-    minute.forwardedToDesignation = recipientUser.designation;
+    minute.forwardedToDesignation = recipientUser.designation || recipientUser.role;
 
     minute.signature = {
       signerName: req.user?.name || req.user?.username || "Legal Officer",
@@ -283,7 +248,8 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
 
     await minute.save();
 
-    const previousReceivedAt = caseItem.internalHold?.heldSince || caseItem.createdAt;
+    // Calculate Desk Hold Duration & Log Movement Audit
+    const previousReceivedAt = caseItem.internalHold?.heldSince || caseItem.createdAt || signTimestamp;
 
     await CaseService.recordFileMovement({
       caseId: caseItem._id,
@@ -296,7 +262,7 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
       toUser: {
         id: recipientUser._id,
         name: recipientUser.name,
-        designation: recipientUser.designation,
+        designation: recipientUser.designation || recipientUser.role,
       },
       actionType: "FORWARD",
       notingPurpose: minute.notingPurpose,
@@ -305,10 +271,11 @@ export const signAndForwardNoting = async (req: AuthRequest, res: Response) => {
       minuteNumber: minute.minuteNumber,
     });
 
+    // Update parent case with new holder and reset hold days to 0
     caseItem.assignedOIC = recipientUser.name;
     caseItem.internalHold = {
       currentHolderId: recipientUser._id,
-      location: `${recipientUser.designation} (${recipientUser.name})`,
+      location: `${recipientUser.designation || recipientUser.role} (${recipientUser.name})`,
       holdDays: 0,
       heldSince: signTimestamp,
     };
@@ -348,9 +315,7 @@ export const verifyMinuteSignature = async (req: Request, res: Response) => {
     });
 
     if (!minute) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Minute record not found." });
+      return res.status(404).json({ success: false, message: "Minute record not found." });
     }
 
     if (!minute.signature || !minute.signature.sha256Seal) {
@@ -396,9 +361,7 @@ export const generatePrintMemo = async (req: AuthRequest, res: Response) => {
     ]);
 
     if (!caseItem) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Case not found." });
+      return res.status(404).json({ success: false, message: "Case not found." });
     }
 
     const minutesHtml =
@@ -417,13 +380,15 @@ export const generatePrintMemo = async (req: AuthRequest, res: Response) => {
                 : "--";
 
               return `
-              <div class="minute-card">
-                <div class="minute-head">
-                  <span class="minute-tag">टिप्पणी संख्या (Minute #${m.minuteNumber}) — ${m.notingPurpose}</span>
-                  <span style="font-size: 9.5px; color: #166534; font-weight: 600;">Signed: ${signDate}</span>
+              <div style="border: 1px solid #000000; margin-bottom: 12px; page-break-inside: avoid;">
+                <div style="background: #0f2744; color: #ffffff; padding: 4px 8px; font-weight: 700; font-size: 9px; display: flex; justify-content: space-between;">
+                  <span>टिप्पणी संख्या (MINUTE #${m.minuteNumber}) — ${m.notingPurpose}</span>
+                  <span>SIGNED: ${signDate}</span>
                 </div>
-                <div class="minute-body">${m.content}</div>
-                <div class="minute-footer">
+                <div style="padding: 8px 10px; font-size: 10px; line-height: 1.4; color: #000000; font-family: ${m.fontEncoding === 'Kruti Dev 14' ? "'Kruti Dev 010', 'Kruti Dev 14', sans-serif" : 'inherit'};">
+                  ${m.content}
+                </div>
+                <div style="border-top: 1px solid #cccccc; padding: 6px 10px; background: #fafafa; display: flex; justify-content: space-between; align-items: flex-end; font-size: 8.5px;">
                   <div>
                     ${
                       m.forwardedToOfficerName
@@ -432,39 +397,39 @@ export const generatePrintMemo = async (req: AuthRequest, res: Response) => {
                     }
                   </div>
                   <div style="text-align: right;">
-                    <div style="font-weight: 700; color: #0f172a;">${m.signature?.signerName || m.authorName}</div>
-                    <div style="color: #64748b;">${m.signature?.signerDesignation || m.authorDesignation}</div>
-                    <div class="signature-badge">[e-Signed: ${m.signature?.certificateSerialNumber || "DSP-SIG-VALID"}]</div>
+                    <div style="font-weight: 800; color: #000000;">${m.signature?.signerName || m.authorName}</div>
+                    <div style="color: #444444;">${m.signature?.signerDesignation || m.authorDesignation} (${m.signature?.signerSection || "Legal Desk"})</div>
+                    <div style="font-family: monospace; font-size: 8px; font-weight: bold; margin-top: 1px;">[e-Signed: ${m.signature?.certificateSerialNumber || "DSP-SIG-VALID"}]</div>
                   </div>
                 </div>
               </div>
             `;
             })
             .join("")
-        : `<div style="text-align: center; padding: 30px; color: #94a3b8; font-style: italic;">No digitally signed minutes recorded on this file docket yet.</div>`;
+        : `<div style="text-align: center; padding: 30px; color: #444444; font-style: italic;">No digitally signed minutes recorded on this file docket yet.</div>`;
 
     const docketSummaryHtml = `
-      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10px;">
-        <div><strong>Writ / Notice No:</strong> <span style="color: #1e40af; font-weight: 700;">${caseItem.writNumber || caseItem.noticeNumber || "--"}</span></div>
+      <div style="border: 1px solid #000000; padding: 8px 10px; margin-bottom: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 9px;">
+        <div><strong>Writ / Notice No:</strong> <span>${caseItem.writNumber || caseItem.noticeNumber || "--"}</span></div>
         <div><strong>Court & Bench:</strong> ${caseItem.court} (${caseItem.benchLocation} Bench)</div>
         <div><strong>Lead Litigant:</strong> ${caseItem.leadPetitioner}</div>
-        <div><strong>Current Holder (OIC):</strong> <span style="color: #0f2744; font-weight: 700;">${caseItem.assignedOIC}</span></div>
+        <div><strong>Current Holder (OIC):</strong> <strong>${caseItem.assignedOIC}</strong></div>
         <div><strong>Next Hearing (NDOH):</strong> ${caseItem.ndoh ? new Date(caseItem.ndoh).toLocaleDateString("en-GB") : "Not Listed"}</div>
-        <div><strong>Internal Docket Ref:</strong> <span style="font-family: monospace;">${caseItem.fileNo}</span></div>
+        <div><strong>Internal File Docket:</strong> <span style="font-family: monospace; font-weight: bold;">${caseItem.fileNo}</span></div>
       </div>
       ${minutesHtml}
     `;
 
     if (format === "pdf" || format === "html") {
       const renderedDoc = renderPdfDocument({
-        reportTitle: "नोटिंग पत्रावली (Green Noting Sheet Ledger)",
+        reportTitle: "नोटिंग पत्रावली (Green Sheet Noting Ledger)",
         reportSubtitle: `File Docket: ${caseItem.fileNo} · ${caseItem.writNumber || caseItem.leadPetitioner}`,
         generatedBy: {
           name: req.user?.name || req.user?.username || "Legal Officer",
           designation: req.user?.designation,
           role: req.user?.role,
         },
-        filterMetaText: `Court: ${caseItem.court}`,
+        filterMetaText: `Court: ${caseItem.court} | Total Minutes: ${minutes.length}`,
         contentHtml: docketSummaryHtml,
       });
 
@@ -474,29 +439,8 @@ export const generatePrintMemo = async (req: AuthRequest, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      memoHeader: {
-        institution: "UTTAR PRADESH POLICE RECRUITMENT AND PROMOTION BOARD",
-        subHeader: "SECRETARIAT FILE NOTING & LEGAL LEDGER",
-        fileNo: caseItem.fileNo,
-        writNumber: caseItem.writNumber,
-        cnrNumber: caseItem.cnrNumber,
-        courtBench: caseItem.court,
-        parties: `${caseItem.leadPetitioner} vs. ${caseItem.respondentString}`,
-        currentHolder: caseItem.assignedOIC,
-        printedAt: new Date().toISOString(),
-      },
       totalSignedMinutes: minutes.length,
-      ledgerMinutes: minutes.map((m) => ({
-        minuteNo: m.minuteNumber,
-        minuteTitle: m.minuteTitle,
-        purpose: m.notingPurpose,
-        content: m.content,
-        signedBy: m.signature?.signerName,
-        designation: m.signature?.signerDesignation,
-        signedAt: m.signature?.signedAt,
-        certSerial: m.signature?.certificateSerialNumber,
-        seal: m.signature?.sha256Seal,
-      })),
+      data: minutes,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });

@@ -1,39 +1,25 @@
-import { User, IUser } from "../models/User";
+import { User } from "../models/User";
 import { RolePermission } from "../models/RolePermission";
 import { Menu } from "../models/Menu";
-
-export interface HydratedUserResponse {
-  id: string;
-  name: string;
-  username: string;
-  rank?: string;
-  designation: string;
-  section: string;
-  mobile: string;
-  email: string;
-  role: string;
-  roleId?: string;
-  courtBench?: string;
-  status: string;
-  lastLogin?: Date | null;
-  permissions: any[];
-  allowedMenus: any[];
-}
+import { HydratedUserResponse, UserContactDetails } from "../types/userType";
 
 export class AuthService {
- 
   static async getHydratedUserProfile(userId: string): Promise<HydratedUserResponse | null> {
     const user = await User.findById(userId).lean();
     if (!user) return null;
+
     let permissions: any[] = [];
     if (user.roleId) {
       permissions = await RolePermission.find({ roleId: user.roleId }).lean();
     }
+
     const allMenus = await Menu.find().sort({ order: 1 }).lean();
     const permittedMenuKeys = new Set(
       permissions.filter((p) => p.canView).map((p) => p.menuKey)
     );
+
     const isSuperAdmin = user.role === "Super Admin" || user.role === "SUPER_ADMIN";
+
     const allowedMenus = allMenus
       .filter((menu) => isSuperAdmin || permittedMenuKeys.has(menu.key))
       .map((menu) => {
@@ -80,8 +66,9 @@ export class AuthService {
       allowedMenus,
     };
   }
-  static async getUserContactDetails(userId: string) {
-    const user = await User.findById(userId).select("name mobile email designation rank section");
+
+  static async getUserContactDetails(userId: string): Promise<UserContactDetails | null> {
+    const user = await User.findById(userId).select("name mobile email designation rank section").lean();
     if (!user) return null;
     return {
       name: user.name,

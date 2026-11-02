@@ -11,9 +11,7 @@ export interface StorageResult {
 }
 
 export class StorageService {
-  /**
-   * Upload file buffer to Cloudinary with compression & SHA-256 hash
-   */
+ 
   static async uploadFile(
     buffer: Buffer,
     originalName: string,
@@ -58,9 +56,6 @@ export class StorageService {
     });
   }
 
-  /**
-   * Replace existing file (Uploads new version, purges old version)
-   */
   static async replaceFile(
     oldPublicId: string,
     newBuffer: Buffer,
@@ -76,9 +71,6 @@ export class StorageService {
     return newUpload;
   }
 
-  /**
-   * Permanent Delete
-   */
   static async deleteFile(publicId: string, isRaw: boolean = false): Promise<boolean> {
     if (!publicId) return false;
     try {
