@@ -18,6 +18,7 @@ import adminRoutes from "./routes/adminRoutes";
 import reportRoutes from "./routes/reportRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 import { seedSystemBootstrap } from "./config/seedSystemBootstrap";
+import cookieParser from "cookie-parser";
 dotenv.config();
 
 const app = express();
@@ -26,6 +27,7 @@ const PORT = process.env.PORT || 5001;
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:3000", credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 app.use(morgan("dev"));
 
 app.use("/api/v1/auth", authRoutes);            

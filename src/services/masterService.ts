@@ -1,3 +1,4 @@
+
 import {
   State,
   Zone,
@@ -16,349 +17,841 @@ import {
   ActionMapping,
   Alias,
   StandingCounsel,
+  
 } from "../models/Masters";
-import { PaginationQuery } from "../types/masterType";
+import { User } from "../models/User";
+
+import {
+  MasterQuery,
+  MasterView,
+  PaginatedResult,
+} from "../types/masterType";
+
+import mongoose from "mongoose";
+
+/* =====================================================
+   MASTER RESOURCE TYPES
+===================================================== */
+
+export type MasterResource =
+  | "states"
+  | "zones"
+  | "ranges"
+  | "districts"
+  | "courts"
+  | "caseTypes"
+  | "categories"
+  | "subCategories"
+  | "subjects"
+  | "subjectCustodians"
+  | "departments"
+  | "ranks"
+  | "designations"
+  | "respondentGroups"
+  | "actionMappings"
+  | "standingCounsels"
+  | "aliases";
+
+/* =====================================================
+   MASTER SERVICE
+===================================================== */
 
 export class MasterService {
-  private static getPaginationParams(query: PaginationQuery) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
-    const skip = (page - 1) * limit;
-    return { page, limit, skip };
+  /* =====================================================
+     MASTER DATA DISPATCHER
+  ===================================================== */
+
+  static async getMasterData(
+    master: MasterResource,
+    view: MasterView,
+    query: MasterQuery,
+  ) {
+    switch (master) {
+      case "states":
+        return this.getStates(query, view);
+
+      case "zones":
+        return this.getZones(query, view);
+
+      case "ranges":
+        return this.getRanges(query, view);
+
+      case "districts":
+        return this.getDistricts(query, view);
+
+      case "courts":
+        return this.getCourts(query, view);
+
+      case "caseTypes":
+        return this.getCaseTypes(query, view);
+
+      case "categories":
+        return this.getCategories(query, view);
+
+      case "subCategories":
+        return this.getSubCategories(query, view);
+
+      case "subjects":
+        return this.getSubjects(query, view);
+
+      case "subjectCustodians":
+        return this.getSubjectCustodians(query, view);
+
+      case "departments":
+        return this.getDepartments(query, view);
+
+      case "ranks":
+        return this.getRanks(query, view);
+
+      case "designations":
+        return this.getDesignations(query, view);
+
+      case "respondentGroups":
+        return this.getRespondentGroups(query, view);
+
+      case "actionMappings":
+        return this.getActionMappings(query, view);
+
+      case "standingCounsels":
+        return this.getStandingCounsels(query, view);
+
+      case "aliases":
+        return this.getAliases(query, view);
+
+      default:
+        throw new Error("Invalid master resource");
+    }
   }
 
-  static async getCaseIntakeDropdowns() {
-    const [
-      states,
-      districts,
-      courts,
-      caseTypes,
-      categories,
-      subCategories,
-      subjects,
-      ranks,
-      designations,
-      departments,
-      respondentGroups,
-      standingCounsels,
-    ] = await Promise.all([
-      State.find().select("stateName stateCode").sort({ stateName: 1 }).lean(),
-      District.find()
-        .populate("stateId", "stateName stateCode")
-        .populate("zoneId", "zoneName")
-        .populate("rangeId", "rangeName")
-        .sort({ districtName: 1 })
-        .lean(),
-      Court.find().select("courtName shortCode location").lean(),
-      CaseType.find().populate("courtId", "courtName shortCode").sort({ caseTypeName: 1 }).lean(),
-      CaseCategory.find().sort({ order: 1 }).lean(),
-      CaseSubCategory.find().populate("categoryId", "categoryName").sort({ subCategoryName: 1 }).lean(),
-      CaseSubject.find()
-        .populate("categoryId", "categoryName")
-        .populate("subCategoryId", "subCategoryName")
-        .sort({ subjectTitle: 1 })
-        .lean(),
-      Rank.find().select("rankName shortCode").lean(),
-      Designation.find().select("title authorityLevel canSignPWC defaultRole").lean(),
-      Department.find().select("unitName unitCode").lean(),
-      RespondentGroup.find().select("groupName defaultRankTitle defaultAddress isOurOffice").lean(),
-      StandingCounsel.find().select("name monitoredBenches").lean(),
-    ]);
+  /* =====================================================
+     PAGINATION HELPERS
+  ===================================================== */
+
+  private static getPaginationParams(
+    query: MasterQuery,
+    view: MasterView = "list",
+  ) {
+    const requestedPage = Number(query.page);
+    const requestedLimit = Number(query.limit);
+
+    const page =
+      Number.isFinite(requestedPage) && requestedPage > 0
+        ? Math.floor(requestedPage)
+        : 1;
+
+    const defaultLimit = view === "options" ? 100 : 10;
+
+    const limit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(100, Math.floor(requestedLimit))
+        : defaultLimit;
 
     return {
-      states,
-      districts,
-      courts,
-      caseTypes,
-      categories,
-      subCategories,
-      subjects,
-      ranks,
-      designations,
-      departments,
-      respondentGroups,
-      standingCounsels,
+      page,
+      limit,
+      skip: (page - 1) * limit,
     };
   }
 
-  static async getPaginatedStates(query: PaginationQuery) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.search) {
-      filter.$or = [
-        { stateName: new RegExp(query.search.trim(), "i") },
-        { stateCode: new RegExp(query.search.trim(), "i") },
-      ];
-    }
-    const [data, totalCount] = await Promise.all([
-      State.find(filter).sort({ stateName: 1 }).skip(skip).limit(limit).lean(),
-      State.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
+  /* =====================================================
+     SEARCH HELPERS
+  ===================================================== */
+
+  private static escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  static async getPaginatedDistricts(params: {
-    stateId?: string;
-    zoneId?: string;
-    rangeId?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
-    const { page, limit, skip } = this.getPaginationParams(params);
-    const filter: any = {};
-    if (params.stateId) filter.stateId = params.stateId;
-    if (params.zoneId) filter.zoneId = params.zoneId;
-    if (params.rangeId) filter.rangeId = params.rangeId;
-    if (params.search) {
-      filter.districtName = new RegExp(params.search.trim(), "i");
+  private static getSearchRegex(search?: string): RegExp | null {
+    const value = search?.trim();
+
+    if (!value) {
+      return null;
     }
 
-    const [data, totalCount] = await Promise.all([
-      District.find(filter)
-        .populate("stateId", "stateName stateCode")
-        .populate("zoneId", "zoneName")
-        .populate("rangeId", "rangeName")
-        .sort({ districtName: 1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      District.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
+    return new RegExp(this.escapeRegex(value), "i");
   }
 
-  static async getPaginatedCourts(query: PaginationQuery) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.search) {
-      filter.$or = [
-        { courtName: new RegExp(query.search.trim(), "i") },
-        { shortCode: new RegExp(query.search.trim(), "i") },
-        { location: new RegExp(query.search.trim(), "i") },
-      ];
+  private static applySearch(
+    filter: Record<string, any>,
+    searchFields: string[],
+    search?: string,
+  ): void {
+    const searchRegex = this.getSearchRegex(search);
+
+    if (!searchRegex) {
+      return;
     }
-    const [data, totalCount] = await Promise.all([
-      Court.find(filter).sort({ courtName: 1 }).skip(skip).limit(limit).lean(),
-      Court.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
+
+    filter.$or = searchFields.map((field) => ({
+      [field]: searchRegex,
+    }));
   }
 
-  static async getPaginatedCaseTypes(params: { courtId?: string; search?: string; page?: number; limit?: number }) {
-    const { page, limit, skip } = this.getPaginationParams(params);
-    const filter: any = {};
-    if (params.courtId && params.courtId !== "ALL") filter.courtId = params.courtId;
-    if (params.search) {
-      filter.$or = [
-        { caseTypeName: new RegExp(params.search.trim(), "i") },
-        { shortName: new RegExp(params.search.trim(), "i") },
-      ];
+  /* =====================================================
+     OPTIONAL FILTER HELPERS
+  ===================================================== */
+
+  private static getOptionalFilterValue(
+    value?: string,
+  ): string | undefined {
+    const normalizedValue = value?.trim();
+
+    if (!normalizedValue || normalizedValue.toUpperCase() === "ALL") {
+      return undefined;
     }
-    const [data, totalCount] = await Promise.all([
-      CaseType.find(filter)
-        .populate("courtId", "courtName shortCode")
-        .sort({ caseTypeName: 1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      CaseType.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
+
+    return normalizedValue;
   }
 
-  static async getCaseTypesByCourt(courtId: string | string[]) {
-    const id = Array.isArray(courtId) ? courtId[0] : courtId;
-    return CaseType.find({ courtId: id }).sort({ caseTypeName: 1 }).lean();
-  }
+  private static getOptionalObjectId(
+    value: string | undefined,
+    fieldName: string,
+  ): mongoose.Types.ObjectId | undefined {
+    const normalizedValue = this.getOptionalFilterValue(value);
 
-  static async getPaginatedCategories(query: PaginationQuery) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.search) {
-      filter.categoryName = new RegExp(query.search.trim(), "i");
+    if (!normalizedValue) {
+      return undefined;
     }
-    const [data, totalCount] = await Promise.all([
-      CaseCategory.find(filter).sort({ order: 1 }).skip(skip).limit(limit).lean(),
-      CaseCategory.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
-  }
 
-  static async getPaginatedSubCategories(params: { categoryId?: string; search?: string; page?: number; limit?: number }) {
-    const { page, limit, skip } = this.getPaginationParams(params);
-    const filter: any = {};
-    if (params.categoryId && params.categoryId !== "ALL") filter.categoryId = params.categoryId;
-    if (params.search) {
-      filter.subCategoryName = new RegExp(params.search.trim(), "i");
+    if (!mongoose.isValidObjectId(normalizedValue)) {
+      throw new Error(`Invalid ${fieldName}`);
     }
-    const [data, totalCount] = await Promise.all([
-      CaseSubCategory.find(filter)
-        .populate("categoryId", "categoryName")
-        .populate("defaultOfficerId", "name username designation")
-        .sort({ subCategoryName: 1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      CaseSubCategory.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
+
+    return new mongoose.Types.ObjectId(normalizedValue);
   }
 
-  static async getSubCategoriesByCategory(categoryId: string | string[]) {
-    const id = Array.isArray(categoryId) ? categoryId[0] : categoryId;
-    return CaseSubCategory.find({ categoryId: id }).sort({ subCategoryName: 1 }).lean();
-  }
+  /* =====================================================
+     COMMON PAGINATED DATA FETCHER
 
-  static async getPaginatedSubjects(params: { categoryId?: string; subCategoryId?: string; search?: string; page?: number; limit?: number }) {
-    const { page, limit, skip } = this.getPaginationParams(params);
-    const filter: any = {};
-    if (params.categoryId && params.categoryId !== "ALL") filter.categoryId = params.categoryId;
-    if (params.subCategoryId) filter.subCategoryId = params.subCategoryId;
-    if (params.search) {
-      filter.subjectTitle = new RegExp(params.search.trim(), "i");
+     - Same document structure for list and options
+     - Latest created record appears first
+     - Populate remains same for both views
+     - Search and filters are applied at database level
+  ===================================================== */
+
+  private static async getPaginatedData(
+    model: any,
+    filter: Record<string, any>,
+    query: MasterQuery,
+    view: MasterView = "list",
+    populate: Array<{ path: string; select: string }> = [],
+  ): Promise<PaginatedResult<any>> {
+    const { page, limit, skip } = this.getPaginationParams(
+      query,
+      view,
+    );
+
+    let dataQuery = model.find(filter);
+
+    for (const item of populate) {
+      dataQuery = dataQuery.populate(item.path, item.select);
     }
+
+    // Latest created records first.
+    // _id provides a consistent secondary sort.
+    dataQuery = dataQuery
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit);
+
     const [data, totalCount] = await Promise.all([
-      CaseSubject.find(filter)
-        .populate("categoryId", "categoryName")
-        .populate("subCategoryId", "subCategoryName")
-        .sort({ subjectTitle: 1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      CaseSubject.countDocuments(filter),
+      dataQuery.lean(),
+      model.countDocuments(filter),
     ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
+
+    return {
+      success: true,
+      totalCount,
+      pagination: {
+        page,
+        limit,
+        pages: Math.ceil(totalCount / limit),
+      },
+      data,
+    };
   }
 
-  static async getSubjectsBySubCategory(subCategoryId: string | string[]) {
-    const id = Array.isArray(subCategoryId) ? subCategoryId[0] : subCategoryId;
-    return CaseSubject.find({ subCategoryId: id }).sort({ subjectTitle: 1 }).lean();
+  /* =====================================================
+     1. STATES
+  ===================================================== */
+
+  static async getStates(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    this.applySearch(
+      filter,
+      ["stateName", "stateCode", "country"],
+      query.search,
+    );
+
+    return this.getPaginatedData(State, filter, query, view);
   }
 
-  static async getPaginatedSubjectCustodians(params: { categoryId?: string; search?: string; page?: number; limit?: number }) {
-    const { page, limit, skip } = this.getPaginationParams(params);
-    const filter: any = {};
-    if (params.categoryId && params.categoryId !== "ALL") filter.categoryId = params.categoryId;
-    if (params.search) {
-      filter.$or = [
-        { officerName: new RegExp(params.search.trim(), "i") },
-        { designation: new RegExp(params.search.trim(), "i") },
-      ];
+  /* =====================================================
+     2. ZONES
+  ===================================================== */
+
+  static async getZones(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const stateId = this.getOptionalObjectId(
+      query.stateId,
+      "stateId",
+    );
+
+    if (stateId) {
+      filter.stateId = stateId;
     }
-    const [data, totalCount] = await Promise.all([
-      SubjectCustodian.find(filter)
-        .populate("subjectId", "subjectTitle")
-        .populate("categoryId", "categoryName")
-        .populate("userId", "name username email mobile")
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      SubjectCustodian.countDocuments(filter),
+
+    this.applySearch(
+      filter,
+      ["zoneName"],
+      query.search,
+    );
+
+    return this.getPaginatedData(Zone, filter, query, view, [
+      { path: "stateId", select: "stateName stateCode" },
     ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
   }
 
-  static async getPaginatedDepartments(query: PaginationQuery & { parentFormation?: string }) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.parentFormation && query.parentFormation !== "ALL") filter.parentFormation = query.parentFormation;
-    if (query.search) {
-      filter.$or = [
-        { unitName: new RegExp(query.search.trim(), "i") },
-        { unitCode: new RegExp(query.search.trim(), "i") },
-      ];
+  /* =====================================================
+     3. RANGES
+  ===================================================== */
+
+  static async getRanges(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const stateId = this.getOptionalObjectId(
+      query.stateId,
+      "stateId",
+    );
+
+    const zoneId = this.getOptionalObjectId(
+      query.zoneId,
+      "zoneId",
+    );
+
+    if (stateId) {
+      filter.stateId = stateId;
     }
-    const [data, totalCount] = await Promise.all([
-      Department.find(filter).sort({ unitName: 1 }).skip(skip).limit(limit).lean(),
-      Department.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
-  }
 
-  static async getPaginatedRanks(query: PaginationQuery & { cadreType?: string }) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.cadreType && query.cadreType !== "ALL") filter.cadreType = query.cadreType;
-    if (query.search) {
-      filter.$or = [
-        { rankName: new RegExp(query.search.trim(), "i") },
-        { shortCode: new RegExp(query.search.trim(), "i") },
-      ];
+    if (zoneId) {
+      filter.zoneId = zoneId;
     }
-    const [data, totalCount] = await Promise.all([
-      Rank.find(filter).sort({ rankName: 1 }).skip(skip).limit(limit).lean(),
-      Rank.countDocuments(filter),
+
+    this.applySearch(
+      filter,
+      ["rangeName"],
+      query.search,
+    );
+
+    return this.getPaginatedData(Range, filter, query, view, [
+      { path: "zoneId", select: "zoneName" },
+      { path: "stateId", select: "stateName stateCode" },
     ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
   }
 
-  static async getPaginatedDesignations(query: PaginationQuery & { authorityLevel?: string }) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.authorityLevel && query.authorityLevel !== "ALL") filter.authorityLevel = query.authorityLevel;
-    if (query.search) {
-      filter.$or = [
-        { title: new RegExp(query.search.trim(), "i") },
-        { defaultRole: new RegExp(query.search.trim(), "i") },
-      ];
+  /* =====================================================
+     4. DISTRICTS
+  ===================================================== */
+
+  static async getDistricts(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const stateId = this.getOptionalObjectId(
+      query.stateId,
+      "stateId",
+    );
+
+    const zoneId = this.getOptionalObjectId(
+      query.zoneId,
+      "zoneId",
+    );
+
+    const rangeId = this.getOptionalObjectId(
+      query.rangeId,
+      "rangeId",
+    );
+
+    if (stateId) {
+      filter.stateId = stateId;
     }
-    const [data, totalCount] = await Promise.all([
-      Designation.find(filter).sort({ title: 1 }).skip(skip).limit(limit).lean(),
-      Designation.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
-  }
 
-  static async getPaginatedRespondentGroups(query: PaginationQuery) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.search) {
-      filter.$or = [
-        { groupName: new RegExp(query.search.trim(), "i") },
-        { defaultRankTitle: new RegExp(query.search.trim(), "i") },
-        { defaultAddress: new RegExp(query.search.trim(), "i") },
-      ];
+    if (zoneId) {
+      filter.zoneId = zoneId;
     }
-    const [data, totalCount] = await Promise.all([
-      RespondentGroup.find(filter).sort({ groupName: 1 }).skip(skip).limit(limit).lean(),
-      RespondentGroup.countDocuments(filter),
-    ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
-  }
 
-  static async getPaginatedActionMappings(query: PaginationQuery) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.search) {
-      filter.$or = [
-        { courtDecision: new RegExp(query.search.trim(), "i") },
-        { actionStatus: new RegExp(query.search.trim(), "i") },
-        { actionNotTaken: new RegExp(query.search.trim(), "i") },
-      ];
+    if (rangeId) {
+      filter.rangeId = rangeId;
     }
-    const [data, totalCount] = await Promise.all([
-      ActionMapping.find(filter).skip(skip).limit(limit).lean(),
-      ActionMapping.countDocuments(filter),
+
+    this.applySearch(
+      filter,
+      ["districtName"],
+      query.search,
+    );
+
+    return this.getPaginatedData(District, filter, query, view, [
+      { path: "stateId", select: "stateName stateCode" },
+      { path: "zoneId", select: "zoneName" },
+      { path: "rangeId", select: "rangeName" },
     ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
   }
 
-  static async getPaginatedStandingCounsels(query: PaginationQuery) {
-    const { page, limit, skip } = this.getPaginationParams(query);
-    const filter: any = {};
-    if (query.search) {
-      filter.name = new RegExp(query.search.trim(), "i");
+  /* =====================================================
+     5. COURTS
+  ===================================================== */
+
+  static async getCourts(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    this.applySearch(
+      filter,
+      ["courtName", "shortCode", "location", "courtType"],
+      query.search,
+    );
+
+    return this.getPaginatedData(Court, filter, query, view);
+  }
+
+  /* =====================================================
+     6. CASE TYPES
+  ===================================================== */
+
+  static async getCaseTypes(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const courtId = this.getOptionalObjectId(
+      query.courtId,
+      "courtId",
+    );
+
+    if (courtId) {
+      filter.courtId = courtId;
     }
-    const [data, totalCount] = await Promise.all([
-      StandingCounsel.find(filter).sort({ name: 1 }).skip(skip).limit(limit).lean(),
-      StandingCounsel.countDocuments(filter),
+
+    this.applySearch(
+      filter,
+      ["caseTypeName", "shortName"],
+      query.search,
+    );
+
+    return this.getPaginatedData(CaseType, filter, query, view, [
+      { path: "courtId", select: "courtName shortCode" },
     ]);
-    return { data, totalCount, page, limit, pages: Math.ceil(totalCount / limit) };
   }
 
-  static async getAllAliasesAndCounsels() {
-    const [aliases, counsels] = await Promise.all([Alias.find().lean(), StandingCounsel.find().lean()]);
-    return { aliases, counsels };
+  /* =====================================================
+     7. CASE CATEGORIES
+  ===================================================== */
+
+  static async getCategories(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    this.applySearch(
+      filter,
+      ["categoryName", "description"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      CaseCategory,
+      filter,
+      query,
+      view,
+    );
+  }
+
+  /* =====================================================
+     8. CASE SUB-CATEGORIES
+  ===================================================== */
+
+static async getSubCategories(
+  query: MasterQuery = {},
+  view: MasterView = "list",
+) {
+  const filter: Record<string, any> = {};
+
+  const categoryId = this.getOptionalObjectId(
+    query.categoryId,
+    "categoryId",
+  );
+
+  const defaultOfficerId = this.getOptionalObjectId(
+    query.defaultOfficerId,
+    "defaultOfficerId",
+  );
+
+  if (categoryId) {
+    filter.categoryId = categoryId;
+  }
+
+  if (defaultOfficerId) {
+    filter.defaultOfficerId = defaultOfficerId;
+  }
+
+  this.applySearch(
+    filter,
+    ["subCategoryName"],
+    query.search,
+  );
+
+  return this.getPaginatedData(
+    CaseSubCategory,
+    filter,
+    query,
+    view,
+    [
+      { path: "categoryId", select: "categoryName" },
+      {
+        path: "defaultOfficerId",
+        select: "name username designation",
+      },
+    ],
+  );
+}
+
+  /* =====================================================
+     9. CASE SUBJECTS
+  ===================================================== */
+
+  static async getSubjects(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const categoryId = this.getOptionalObjectId(
+      query.categoryId,
+      "categoryId",
+    );
+
+    const subCategoryId = this.getOptionalObjectId(
+      query.subCategoryId,
+      "subCategoryId",
+    );
+
+    if (categoryId) {
+      filter.categoryId = categoryId;
+    }
+
+    if (subCategoryId) {
+      filter.subCategoryId = subCategoryId;
+    }
+
+    this.applySearch(
+      filter,
+      ["subjectTitle"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      CaseSubject,
+      filter,
+      query,
+      view,
+      [
+        { path: "categoryId", select: "categoryName" },
+        { path: "subCategoryId", select: "subCategoryName" },
+      ],
+    );
+  }
+
+  /* =====================================================
+     10. SUBJECT CUSTODIANS
+  ===================================================== */
+
+  static async getSubjectCustodians(
+  query: MasterQuery = {},
+  view: MasterView = "list",
+) {
+  const filter: Record<string, any> = {};
+
+  const categoryId = this.getOptionalObjectId(
+    query.categoryId,
+    "categoryId",
+  );
+
+  const subjectId = this.getOptionalObjectId(
+    query.subjectId,
+    "subjectId",
+  );
+
+  const userId = this.getOptionalObjectId(
+    query.userId,
+    "userId",
+  );
+
+  const designationId = this.getOptionalObjectId(
+    query.designationId,
+    "designationId",
+  );
+
+  if (categoryId) {
+    filter.categoryId = categoryId;
+  }
+
+  if (subjectId) {
+    filter.subjectId = subjectId;
+  }
+
+  if (userId) {
+    filter.userId = userId;
+  }
+
+  if (designationId) {
+    filter.designationId = designationId;
+  }
+
+  const searchRegex = this.getSearchRegex(query.search);
+
+  if (searchRegex) {
+    const [matchingUsers, matchingDesignations] = await Promise.all([
+      User.find({
+        $or: [
+          { name: searchRegex },
+          { username: searchRegex },
+          { email: searchRegex },
+          { mobile: searchRegex },
+        ],
+      }).distinct("_id"),
+
+      Designation.find({
+        $or: [
+          { title: searchRegex },
+          { authorityLevel: searchRegex },
+          { defaultRole: searchRegex },
+        ],
+      }).distinct("_id"),
+    ]);
+
+    filter.$or = [
+      { userId: { $in: matchingUsers } },
+      { designationId: { $in: matchingDesignations } },
+    ];
+  }
+
+  return this.getPaginatedData(
+    SubjectCustodian,
+    filter,
+    query,
+    view,
+    [
+      { path: "subjectId", select: "subjectTitle" },
+      { path: "categoryId", select: "categoryName" },
+      {
+        path: "userId",
+        select: "name username email mobile",
+      },
+      {
+        path: "designationId",
+        select: "title authorityLevel defaultRole",
+      },
+    ],
+  );
+}
+
+  /* =====================================================
+     11. RANKS
+  ===================================================== */
+
+  static async getRanks(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const cadreType = this.getOptionalFilterValue(
+      query.cadreType,
+    );
+
+    if (cadreType) {
+      filter.cadreType = cadreType;
+    }
+
+    this.applySearch(
+      filter,
+      ["rankName", "shortCode", "payLevelGrade"],
+      query.search,
+    );
+
+    return this.getPaginatedData(Rank, filter, query, view);
+  }
+
+  /* =====================================================
+     12. DESIGNATIONS
+  ===================================================== */
+
+  static async getDesignations(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const authorityLevel = this.getOptionalFilterValue(
+      query.authorityLevel,
+    );
+
+    if (authorityLevel) {
+      filter.authorityLevel = authorityLevel;
+    }
+
+    this.applySearch(
+      filter,
+      ["title", "defaultRole"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      Designation,
+      filter,
+      query,
+      view,
+    );
+  }
+  static async getDepartments(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const parentFormation = this.getOptionalFilterValue(
+      query.parentFormation,
+    );
+
+    if (parentFormation) {
+      filter.parentFormation = parentFormation;
+    }
+
+    this.applySearch(
+      filter,
+      ["unitName", "unitCode", "headquarters"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      Department,
+      filter,
+      query,
+      view,
+    );
+  }
+  static async getRespondentGroups(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    this.applySearch(
+      filter,
+      ["groupName", "defaultRankTitle", "defaultAddress"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      RespondentGroup,
+      filter,
+      query,
+      view,
+    );
+  }
+  static async getActionMappings(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    this.applySearch(
+      filter,
+      [
+        "courtDecision",
+        "actionStatus",
+        "actionNotTaken",
+        "impactScope",
+      ],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      ActionMapping,
+      filter,
+      query,
+      view,
+    );
+  }
+  static async getAliases(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    const language = this.getOptionalFilterValue(
+      query.language,
+    );
+
+    const category = this.getOptionalFilterValue(
+      query.category,
+    );
+
+    if (language) {
+      filter.language = language;
+    }
+
+    if (category) {
+      filter.category = category;
+    }
+
+    this.applySearch(
+      filter,
+      ["keyword", "language", "category"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      Alias,
+      filter,
+      query,
+      view,
+    );
+  }
+  static async getStandingCounsels(
+    query: MasterQuery = {},
+    view: MasterView = "list",
+  ) {
+    const filter: Record<string, any> = {};
+
+    this.applySearch(
+      filter,
+      ["name", "monitoredBenches"],
+      query.search,
+    );
+
+    return this.getPaginatedData(
+      StandingCounsel,
+      filter,
+      query,
+      view,
+    );
   }
 }

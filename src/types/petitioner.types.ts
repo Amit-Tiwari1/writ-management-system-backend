@@ -1,6 +1,9 @@
+
 import { Document, Types } from "mongoose";
 
-export type PetitionerRoleType = "Lead Petitioner" | "Co-Petitioner";
+export type PetitionerRoleType =
+  | "Lead Petitioner"
+  | "Co-Petitioner";
 
 export type PetitionerStatusType =
   | "ACTIVE"
@@ -8,7 +11,10 @@ export type PetitionerStatusType =
   | "DISMISSED_ON_MERIT"
   | "RELIEF_GRANTED";
 
-export type PetitionerSourceType = "MANUAL_ENTRY" | "CSV_IMPORT" | "ECOURTS_SYNC";
+export type PetitionerSourceType =
+  | "MANUAL_ENTRY"
+  | "CSV_IMPORT"
+  | "ECOURTS_SYNC";
 
 export interface IPetitionerBase {
   caseId: Types.ObjectId;
@@ -20,8 +26,6 @@ export interface IPetitionerBase {
   role: PetitionerRoleType;
   categoryClaimed: string;
   postClaimed: string;
-  state: string;
-  district: string;
   stateId?: Types.ObjectId;
   districtId?: Types.ObjectId;
   examCenter?: string;

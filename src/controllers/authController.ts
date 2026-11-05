@@ -8,6 +8,7 @@ import { generateAccessToken, generateRefreshToken } from "../utils/tokenUtils";
 import { logAuditEvent } from "../utils/auditLogger";
 import { AuthService } from "../services/authService";
 import { passwordResetOtpTemplate } from "../utils/emailTemplates";
+import  {RefreshToken}  from "../models/RefreshToken";
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendClient = resendApiKey ? new Resend(resendApiKey) : null;
@@ -15,51 +16,60 @@ const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: false,
   sameSite: "lax" as const,
-  maxAge: 8 * 60 * 60 * 1000,
+  path: "/",
+};
+
+const ACCESS_COOKIE_OPTIONS = {
+  ...COOKIE_OPTIONS,
+  maxAge: 15 * 60 * 1000, // 15 minutes
+};
+
+const REFRESH_COOKIE_OPTIONS = {
+  ...COOKIE_OPTIONS,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
+const hashRefreshToken = (token: string) => {
+  return crypto.createHash("sha256").update(token).digest("hex");
 };
 
 export const login = async (req: Request, res: Response) => {
   try {
+    console.log("[AUTH DEBUG] RefreshToken:", typeof RefreshToken);
+console.log("[AUTH DEBUG] RefreshToken model:", RefreshToken?.modelName);
     const { username, password } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: "Username / Mobile / Email and password are required.",
+        message: "Username and password are required.",
       });
     }
 
-    const identifier = String(username).trim();
-    const cleanLower = identifier.toLowerCase();
-    const user = await User.findOne({
-      $or: [
-        { username: cleanLower },
-        { mobile: identifier },
-        { email: cleanLower },
-      ],
-    });
+    const user = await User.findOne({ username });
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Invalid credentials.",
+        message: "Invalid username or password.",
+      });
+    }
+
+    const isPasswordValid = await comparePassword(password, user.passwordHash);
+
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid username or password.",
       });
     }
 
     if (user.status !== "ACTIVE") {
       return res.status(403).json({
         success: false,
-        message: "Account deactivated. Contact Legal Cell Administration.",
-      });
-    }
-
-    const isMatch = await comparePassword(password, user.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials.",
+        message: "Your account is inactive. Please contact administrator.",
       });
     }
 
@@ -76,23 +86,29 @@ export const login = async (req: Request, res: Response) => {
     const accessToken = generateAccessToken(payload);
     const refreshTokenObj = generateRefreshToken();
 
-    res.cookie("access_token", accessToken, COOKIE_OPTIONS);
-    res.cookie("refresh_token", refreshTokenObj.token, {
-      ...COOKIE_OPTIONS,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+    // Save hashed refresh token in database
+    await RefreshToken.create({
+      userId: user._id,
+      token: hashRefreshToken(refreshTokenObj.token),
+      expiresAt: refreshTokenObj.expiresAt,
     });
 
-    const hydratedProfile = await AuthService.getHydratedUserProfile(
-      user._id.toString(),
-    );
-    const authReq = req as AuthRequest;
-    authReq.user = payload;
+    // Set HTTP-only cookies
+    res.cookie("access_token", accessToken, ACCESS_COOKIE_OPTIONS);
+
+    res.cookie("refresh_token", refreshTokenObj.token, REFRESH_COOKIE_OPTIONS);
+    (req as any).user = {
+      id: user._id,
+      username: user.username,
+      designation: user.designation,
+      role: user.role,
+    };
     await logAuditEvent(
-      authReq,
+      req,
       "USER_LOGIN",
-      "AUTH",
-      `User ${user.username} authenticated successfully`,
-      { username: user.username, role: user.role, status: "SUCCESS" },
+      "",
+      "User logged in successfully",
+      { userId: user._id.toString() },
       "INFO",
     );
 
@@ -100,16 +116,32 @@ export const login = async (req: Request, res: Response) => {
       success: true,
       message: "Login successful.",
       token: accessToken,
-      refreshToken: refreshTokenObj.token,
-      user: hydratedProfile,
+      user: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        designation: user.designation,
+      },
     });
   } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("Login Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong during login.",
+    });
   }
 };
 
 export const getMe = async (req: AuthRequest, res: Response) => {
   try {
+    if (!req.user?.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Please login again.",
+      });
+    }
+
     const hydratedProfile = await AuthService.getHydratedUserProfile(
       req.user.id,
     );
@@ -130,46 +162,130 @@ export const getMe = async (req: AuthRequest, res: Response) => {
 
 export const refreshToken = async (req: Request, res: Response) => {
   try {
-    const rawToken = req.body.refreshToken || req.cookies?.refresh_token;
+    const rawToken = req.cookies?.refresh_token;
+
     if (!rawToken) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Refresh token is missing." });
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token missing. Please login again.",
+      });
     }
+
+    const hashedToken = hashRefreshToken(rawToken);
+
+    const storedToken = await RefreshToken.findOneAndUpdate(
+      {
+        token: hashedToken,
+        isRevoked: false,
+        expiresAt: { $gt: new Date() },
+      },
+      {
+        $set: { isRevoked: true },
+      },
+      { new: false },
+    );
+
+    if (!storedToken) {
+      res.clearCookie("access_token", COOKIE_OPTIONS);
+      res.clearCookie("refresh_token", COOKIE_OPTIONS);
+
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token expired or invalid. Please login again.",
+      });
+    }
+
+    const user = await User.findById(storedToken.userId);
+
+    if (!user || user.status !== "ACTIVE") {
+      res.clearCookie("access_token", COOKIE_OPTIONS);
+      res.clearCookie("refresh_token", COOKIE_OPTIONS);
+
+      return res.status(401).json({
+        success: false,
+        message: "User session is no longer valid. Please login again.",
+      });
+    }
+
+    const payload = {
+      id: user._id.toString(),
+      username: user.username,
+      role: user.role,
+      designation: user.designation,
+    };
+
+    // Generate new tokens
+    const newAccessToken = generateAccessToken(payload);
+    const newRefreshToken = generateRefreshToken();
+
+    // Save new hashed refresh token
+    await RefreshToken.create({
+      userId: user._id,
+      token: hashRefreshToken(newRefreshToken.token),
+      expiresAt: newRefreshToken.expiresAt,
+    });
+
+    // Set updated cookies
+    res.cookie("access_token", newAccessToken, ACCESS_COOKIE_OPTIONS);
+
+    res.cookie("refresh_token", newRefreshToken.token, REFRESH_COOKIE_OPTIONS);
 
     return res.status(200).json({
       success: true,
       message: "Token refreshed successfully.",
+      token: newAccessToken,
     });
   } catch (error: any) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid or expired refresh token." });
+    console.error("Refresh Token Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to refresh session. Please try again.",
+    });
   }
 };
 
 export const logout = async (req: AuthRequest, res: Response) => {
   try {
-    if (req.user) {
-      await logAuditEvent(
-        req,
-        "USER_LOGOUT",
-        "AUTH",
-        `User ${req.user.username} logged out`,
-        { username: req.user.username },
-        "INFO",
+    const rawToken = req.cookies?.refresh_token;
+
+    if (rawToken) {
+      const hashedToken = hashRefreshToken(rawToken);
+
+      await RefreshToken.updateOne(
+        {
+          token: hashedToken,
+          isRevoked: false,
+        },
+        {
+          $set: { isRevoked: true },
+        },
       );
     }
 
-    res.clearCookie("access_token");
-    res.clearCookie("refresh_token");
+    await logAuditEvent(
+      req,
+      "USER_LOGOUT",
+      "",
+      "User logged out successfully",
+      { userId: req.user?.id },
+      "INFO",
+    );
+
+    res.clearCookie("access_token", COOKIE_OPTIONS);
+    res.clearCookie("refresh_token", COOKIE_OPTIONS);
 
     return res.status(200).json({
       success: true,
-      message: "Logged out successfully.",
+      message: "Logout successful.",
     });
   } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("Logout Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to logout.",
+    });
   }
 };
 

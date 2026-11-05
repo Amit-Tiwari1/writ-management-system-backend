@@ -1,14 +1,18 @@
+
 import { Document, Types } from "mongoose";
 
 export interface IConnectedWrit {
-  caseId?: Types.ObjectId;
+  caseId?: Types.ObjectId | null;
   writNumber: string;
   cnrNumber?: string;
   petitionerName?: string;
   taggedDate?: Date;
 }
 
-export type BenchLocationType = "Allahabad" | "Lucknow" | "New Delhi";
+export type BenchLocationType =
+  | "Allahabad"
+  | "Lucknow"
+  | "New Delhi";
 
 export type JudicialStatusType =
   | "PRE_NOTICE"
@@ -26,7 +30,7 @@ export type SyncStatusType =
   | "DISCREPANCY";
 
 export interface IInternalHold {
-  currentHolderId?: Types.ObjectId;
+  currentHolderId?: Types.ObjectId | null;
   location: string;
   holdDays: number;
   heldSince?: Date;
@@ -45,11 +49,12 @@ export interface ICaseBase {
   writNumber?: string;
   cnrNumber?: string;
   identifierTier: 1 | 2 | 3 | 4;
-  courtId?: Types.ObjectId;
-  court: string;
+  courtId: Types.ObjectId;
   courtCode: string;
-  caseTypeId?: Types.ObjectId;
-  caseType: string;
+  caseTypeId: Types.ObjectId;
+  categoryId: Types.ObjectId;
+  subCategoryId: Types.ObjectId;
+  subjectId: Types.ObjectId;
   caseNumber?: string;
   caseYear?: number;
   benchLocation: BenchLocationType;
@@ -59,15 +64,9 @@ export interface ICaseBase {
   respondentString: string;
   petitionerAdvocate?: string;
   stateCounsel?: string;
-  assignedOIC: string;
-  assignedPairokar: string;
+  assignedOIC: Types.ObjectId;
+  assignedPairokar: Types.ObjectId;
   sectionWing: string;
-  categoryId?: Types.ObjectId;
-  category: string;
-  subCategoryId?: Types.ObjectId;
-  subCategory?: string;
-  subjectId?: Types.ObjectId;
-  disputeSubject: string;
   examCycle: string;
   stage: string;
   judicialStatus: JudicialStatusType;
@@ -76,10 +75,10 @@ export interface ICaseBase {
   listingItemNo?: string;
   hasActiveStay: boolean;
   stayScope?: string;
-  stayGrantedDate?: Date;
-  stayVacationDueDate?: Date;
+  stayGrantedDate?: Date | null;
+  stayVacationDueDate?: Date | null;
   isContemptNotice: boolean;
-  contemptDeadlineDate?: Date;
+  contemptDeadlineDate?: Date | null;
   connectedWrits: IConnectedWrit[];
   coPetitionersCount: number;
   syncStatus: SyncStatusType;

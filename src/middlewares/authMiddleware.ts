@@ -1,22 +1,37 @@
+
 import { Request, Response, NextFunction } from "express";
 import { verifyAccessToken } from "../utils/tokenUtils";
 
 export interface AuthRequest extends Request {
-  user?: any;
+  user?: {
+    id: string;
+    username: string;
+    role: string;
+    designation?: string;
+    [key: string]: any;
+  };
 }
 
-export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
+export const authenticateToken = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
   let token: string | undefined;
 
-  const authHeader = req.headers["authorization"];
+  // 1. First priority: Authorization Bearer token
+  const authHeader = req.headers.authorization;
+
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
+    token = authHeader.substring(7).trim();
   }
 
-  if (!token && req.cookies && req.cookies.access_token) {
+  // 2. Second priority: HTTP-only access token cookie
+  if (!token && req.cookies?.access_token) {
     token = req.cookies.access_token;
   }
 
+  // 3. Token missing
   if (!token) {
     return res.status(401).json({
       success: false,
@@ -24,12 +39,23 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     });
   }
 
+  // 4. Verify access token
   try {
     const decoded = verifyAccessToken(token);
-    req.user = decoded;
-    next();
-  } catch (err: any) {
-    return res.status(403).json({
+
+    if (typeof decoded !== "object" || decoded === null) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid authorization token.",
+      });
+    }
+
+    req.user = decoded as AuthRequest["user"];
+
+    return next();
+  } catch (error: any) {
+    // 401 triggers frontend refresh interceptor
+    return res.status(401).json({
       success: false,
       message: "Token expired or unauthorized session.",
     });

@@ -1,23 +1,52 @@
-import mongoose, { Document } from "mongoose";
 
+import mongoose from "mongoose";
+import type { Document } from "mongoose";
+
+
+export type MasterView = "list" | "options";
+
+export type SortOrder = "asc" | "desc";
 
 export interface PaginationQuery {
   page?: number;
   limit?: number;
   search?: string;
+  sortBy?: string;
+  sortOrder?: SortOrder;
+}
+
+
+export interface MasterQuery extends PaginationQuery {
+  stateId?: string;
+  zoneId?: string;
+  rangeId?: string;
+  courtId?: string;
+  categoryId?: string;
+  subCategoryId?: string;
+  subjectId?: string;
+  userId?: string;
+  designationId?: string;
+  defaultOfficerId?: string;
+  defaultRankId?: string;
+  parentFormation?: string;
+  cadreType?: string;
+  authorityLevel?: string;
+  language?: string;
+  category?: string;
+}
+
+export interface PaginationMetadata {
+  page: number;
+  limit: number;
+  pages: number;
 }
 
 export interface PaginatedResult<T> {
   success: boolean;
   totalCount: number;
-  pagination: {
-    page: number;
-    limit: number;
-    pages: number;
-  };
+  pagination: PaginationMetadata;
   data: T[];
 }
-
 
 export interface IState extends Document {
   stateName: string;
@@ -45,7 +74,6 @@ export interface IDistrict extends Document {
   activeWritsCount: number;
 }
 
-
 export interface ICourt extends Document {
   courtName: string;
   shortCode: string;
@@ -60,7 +88,6 @@ export interface ICaseType extends Document {
   activeWritsCount: number;
 }
 
-
 export interface ICaseCategory extends Document {
   categoryName: string;
   description?: string;
@@ -70,8 +97,7 @@ export interface ICaseCategory extends Document {
 export interface ICaseSubCategory extends Document {
   categoryId: mongoose.Types.ObjectId;
   subCategoryName: string;
-  defaultOfficerName?: string;
-  defaultOfficerId?: mongoose.Types.ObjectId;
+  defaultOfficerId?: mongoose.Types.ObjectId | null;
 }
 
 export interface ICaseSubject extends Document {
@@ -83,11 +109,9 @@ export interface ICaseSubject extends Document {
 export interface ISubjectCustodian extends Document {
   subjectId: mongoose.Types.ObjectId;
   categoryId: mongoose.Types.ObjectId;
-  officerName: string;
-  designation: string;
-  userId?: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  designationId: mongoose.Types.ObjectId;
 }
-
 
 export interface IRank extends Document {
   rankName: string;
@@ -114,7 +138,7 @@ export interface IDepartment extends Document {
 
 export interface IRespondentGroup extends Document {
   groupName: string;
-  defaultRankTitle: string;
+  defaultRankId: string;
   defaultAddress: string;
   isOurOffice: boolean;
 }

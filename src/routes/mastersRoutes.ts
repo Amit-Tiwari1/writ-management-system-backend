@@ -1,117 +1,217 @@
+
 import { Router } from "express";
+
 import {
-  getIntakeDropdownOptions,
+  // States
   getStates,
   createState,
   updateState,
   deleteState,
+
+  // Zones
   getZones,
   createZone,
+  updateZone,
+  deleteZone,
+
+  // Ranges
   getRanges,
   createRange,
+  updateRange,
+  deleteRange,
+
+  // Districts
   getDistricts,
   createDistrict,
+  updateDistrict,
   deleteDistrict,
+
+  // Courts
   getCourts,
   createCourt,
+  updateCourt,
   deleteCourt,
+
+  // Case Types
   getCaseTypes,
-  getCaseTypesByCourt,
   createCaseType,
+  updateCaseType,
   deleteCaseType,
+
+  // Categories
   getCategories,
   createCategory,
+  updateCategory,
+  deleteCategory,
+
+  // Sub Categories
   getSubCategories,
-  getSubCategoriesByCategory,
   createSubCategory,
+  updateSubCategory,
+  deleteSubCategory,
+
+  // Subjects
   getSubjects,
-  getSubjectsBySubCategory,
   createSubject,
+  updateSubject,
+  deleteSubject,
+
+  // Subject Custodians
   getSubjectCustodians,
   createSubjectCustodian,
+  updateSubjectCustodian,
+  deleteSubjectCustodian,
+
+  // Departments
   getDepartments,
   createDepartment,
+  updateDepartment,
+  deleteDepartment,
+
+  // Ranks
   getRanks,
   createRank,
+  updateRank,
+  deleteRank,
+
+  // Designations
   getDesignations,
   createDesignation,
+  updateDesignation,
+  deleteDesignation,
+
+  // Respondent Groups
   getRespondentGroups,
   createRespondentGroup,
+  updateRespondentGroup,
+  deleteRespondentGroup,
+
+  // Action Mappings
   getActionMappings,
   createActionMapping,
+  updateActionMapping,
+  deleteActionMapping,
+
+  // Standing Counsels
   getStandingCounsels,
   createStandingCounsel,
+  updateStandingCounsel,
+  deleteStandingCounsel,
+
+  // Aliases
   getAliases,
   createAlias,
+  updateAlias,
+  deleteAlias,
 } from "../controllers/mastersController";
+
 import { authenticateToken } from "../middlewares/authMiddleware";
 
 const router = Router();
 
-// 1. One-shot intake wizard dropdown data
-router.get("/dropdowns", authenticateToken, getIntakeDropdownOptions);
+// Authentication
+router.use(authenticateToken);
 
-// 2. Administrative Jurisdictions
-router.get("/states", authenticateToken, getStates);
-router.post("/states", authenticateToken, createState);
-router.put("/states/:id", authenticateToken, updateState);
-router.delete("/states/:id", authenticateToken, deleteState);
+// States
+router.get("/states", getStates);
+router.post("/states", createState);
+router.put("/states/:id", updateState);
+router.delete("/states/:id", deleteState);
 
-router.get("/zones", authenticateToken, getZones);
-router.post("/zones", authenticateToken, createZone);
+// Zones
+router.get("/zones", getZones);
+router.post("/zones", createZone);
+router.put("/zones/:id", updateZone);
+router.delete("/zones/:id", deleteZone);
 
-router.get("/ranges", authenticateToken, getRanges);
-router.post("/ranges", authenticateToken, createRange);
+// Ranges
+router.get("/ranges", getRanges);
+router.post("/ranges", createRange);
+router.put("/ranges/:id", updateRange);
+router.delete("/ranges/:id", deleteRange);
 
-router.get("/districts", authenticateToken, getDistricts);
-router.post("/districts", authenticateToken, createDistrict);
-router.delete("/districts/:id", authenticateToken, deleteDistrict);
+// Districts
+router.get("/districts", getDistricts);
+router.post("/districts", createDistrict);
+router.put("/districts/:id", updateDistrict);
+router.delete("/districts/:id", deleteDistrict);
 
-// 3. Courts & Case Types (With Cascading Endpoint)
-router.get("/courts", authenticateToken, getCourts);
-router.post("/courts", authenticateToken, createCourt);
-router.delete("/courts/:id", authenticateToken, deleteCourt);
+// Courts
+router.get("/courts", getCourts);
+router.post("/courts", createCourt);
+router.put("/courts/:id", updateCourt);
+router.delete("/courts/:id", deleteCourt);
 
-router.get("/case-types", authenticateToken, getCaseTypes);
-router.get("/case-types/by-court/:courtId", authenticateToken, getCaseTypesByCourt);
-router.post("/case-types", authenticateToken, createCaseType);
-router.delete("/case-types/:id", authenticateToken, deleteCaseType);
+// Case Types
+router.get("/case-types", getCaseTypes);
+router.post("/case-types", createCaseType);
+router.put("/case-types/:id", updateCaseType);
+router.delete("/case-types/:id", deleteCaseType);
 
-// 4. Taxonomy: Categories -> SubCategories -> Subjects (With Cascading Endpoints)
-router.get("/categories", authenticateToken, getCategories);
-router.post("/categories", authenticateToken, createCategory);
+// Categories
+router.get("/categories", getCategories);
+router.post("/categories", createCategory);
+router.put("/categories/:id", updateCategory);
+router.delete("/categories/:id", deleteCategory);
 
-router.get("/sub-categories", authenticateToken, getSubCategories);
-router.get("/sub-categories/by-category/:categoryId", authenticateToken, getSubCategoriesByCategory);
-router.post("/sub-categories", authenticateToken, createSubCategory);
+// Sub Categories
+router.get("/sub-categories", getSubCategories);
+router.post("/sub-categories", createSubCategory);
+router.put("/sub-categories/:id", updateSubCategory);
+router.delete("/sub-categories/:id", deleteSubCategory);
 
-router.get("/subjects", authenticateToken, getSubjects);
-router.get("/subjects/by-subcategory/:subCategoryId", authenticateToken, getSubjectsBySubCategory);
-router.post("/subjects", authenticateToken, createSubject);
+// Subjects
+router.get("/subjects", getSubjects);
+router.post("/subjects", createSubject);
+router.put("/subjects/:id", updateSubject);
+router.delete("/subjects/:id", deleteSubject);
 
-router.get("/custodians", authenticateToken, getSubjectCustodians);
-router.post("/custodians", authenticateToken, createSubjectCustodian);
+// Subject Custodians
+router.get("/subject-custodians", getSubjectCustodians);
+router.post("/subject-custodians", createSubjectCustodian);
+router.put("/subject-custodians/:id", updateSubjectCustodian);
+router.delete("/subject-custodians/:id", deleteSubjectCustodian);
 
-// 5. Institutional Master Tables
-router.get("/departments", authenticateToken, getDepartments);
-router.post("/departments", authenticateToken, createDepartment);
+// Departments
+router.get("/departments", getDepartments);
+router.post("/departments", createDepartment);
+router.put("/departments/:id", updateDepartment);
+router.delete("/departments/:id", deleteDepartment);
 
-router.get("/ranks", authenticateToken, getRanks);
-router.post("/ranks", authenticateToken, createRank);
+// Ranks
+router.get("/ranks", getRanks);
+router.post("/ranks", createRank);
+router.put("/ranks/:id", updateRank);
+router.delete("/ranks/:id", deleteRank);
 
-router.get("/designations", authenticateToken, getDesignations);
-router.post("/designations", authenticateToken, createDesignation);
+// Designations
+router.get("/designations", getDesignations);
+router.post("/designations", createDesignation);
+router.put("/designations/:id", updateDesignation);
+router.delete("/designations/:id", deleteDesignation);
 
-router.get("/respondent-groups", authenticateToken, getRespondentGroups);
-router.post("/respondent-groups", authenticateToken, createRespondentGroup);
+// Respondent Groups
+router.get("/respondent-groups", getRespondentGroups);
+router.post("/respondent-groups", createRespondentGroup);
+router.put("/respondent-groups/:id", updateRespondentGroup);
+router.delete("/respondent-groups/:id", deleteRespondentGroup);
 
-router.get("/action-mappings", authenticateToken, getActionMappings);
-router.post("/action-mappings", authenticateToken, createActionMapping);
+// Action Mappings
+router.get("/action-mappings", getActionMappings);
+router.post("/action-mappings", createActionMapping);
+router.put("/action-mappings/:id", updateActionMapping);
+router.delete("/action-mappings/:id", deleteActionMapping);
 
-router.get("/standing-counsels", authenticateToken, getStandingCounsels);
-router.post("/standing-counsels", authenticateToken, createStandingCounsel);
+// Standing Counsels
+router.get("/standing-counsels", getStandingCounsels);
+router.post("/standing-counsels", createStandingCounsel);
+router.put("/standing-counsels/:id", updateStandingCounsel);
+router.delete("/standing-counsels/:id", deleteStandingCounsel);
 
-router.get("/aliases", authenticateToken, getAliases);
-router.post("/aliases", authenticateToken, createAlias);
+// Aliases
+router.get("/aliases", getAliases);
+router.post("/aliases", createAlias);
+router.put("/aliases/:id", updateAlias);
+router.delete("/aliases/:id", deleteAlias);
 
 export default router;

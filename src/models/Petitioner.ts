@@ -1,3 +1,4 @@
+
 import mongoose, { Schema } from "mongoose";
 import { IPetitioner } from "../types/petitioner.types";
 
@@ -51,24 +52,18 @@ const PetitionerSchema = new Schema<IPetitioner>(
       default: "Constable Civil Police",
       trim: true,
     },
-    state: {
-      type: String,
-      default: "Uttar Pradesh",
-      trim: true,
-    },
-    district: {
-      type: String,
-      default: "--",
-      trim: true,
-    },
+
     stateId: {
       type: Schema.Types.ObjectId,
       ref: "State",
+      index: true,
     },
     districtId: {
       type: Schema.Types.ObjectId,
       ref: "District",
+      index: true,
     },
+
     examCenter: {
       type: String,
       default: "--",
@@ -107,4 +102,7 @@ const PetitionerSchema = new Schema<IPetitioner>(
 PetitionerSchema.index({ caseId: 1, rollNo: 1 }, { unique: true });
 PetitionerSchema.index({ fileNo: 1, name: "text", rollNo: "text" });
 
-export const Petitioner = mongoose.model<IPetitioner>("Petitioner", PetitionerSchema);
+export const Petitioner = mongoose.model<IPetitioner>(
+  "Petitioner",
+  PetitionerSchema
+);
